@@ -4,6 +4,7 @@ from src.common.logger import get_logger
 from src.plugin_system import BaseAction, BaseCommand, BaseEventHandler, BasePlugin, BaseTool, ConfigField, register_plugin
 from src.plugin_system.base.component_types import ActionInfo, CommandInfo, EventHandlerInfo, PythonDependency, ToolInfo
 from .components.generate_image_action import GenerateImageAction
+from .clients import BizyAirMcpClient, BizyAirOpenApiClient
 
 logger = get_logger("bizyair_generate_image_plugin")
 
@@ -21,21 +22,62 @@ class BizyAirGenerateImagePlugin(BasePlugin):
     config_file_name: str = "config.toml"
 
     config_section_descriptions = {
+        "bizyair_client": "BizyAir 接口连接配置",
         "bizyair_generate_image_plugin": "BizyAir 文生图 Action 配置",
     }
 
     config_schema = {
-        "bizyair_generate_image_plugin": {
+        "bizyair_client": {
+            "provider": ConfigField(
+                type=str,
+                choices=["mcp", "openapi"],
+                default="mcp",
+                description="选择当前使用的 BizyAir 接口类型。mcp 为 Streamable MCP，openapi 为 HTTP OpenAPI。",
+            ),
             "bearer_token": ConfigField(
                 type=str,
                 default="",
-                description="BizyAir MCP 的 Bearer Token。留空时 action 不可用。",
+                description="BizyAir 的 Bearer Token。留空时生图 action 不可用。",
             ),
             "mcp_url": ConfigField(
                 type=str,
-                default="https://api.bizyair.cn/w/v1/mcp/232",
+                default=BizyAirMcpClient.MCP_URL,
                 description="BizyAir MCP 的 Streamable HTTP 地址。",
             ),
+            "openapi_url": ConfigField(
+                type=str,
+                default=BizyAirOpenApiClient.API_URL,
+                description="BizyAir OpenAPI 的 HTTP 地址。",
+            ),
+            "openapi_web_app_id": ConfigField(
+                type=int,
+                default=BizyAirOpenApiClient.WEB_APP_ID,
+                description="BizyAir OpenAPI 的 web_app_id。",
+            ),
+            "openapi_parameter_mappings": ConfigField(
+                type=list,
+                item_type="object",
+                item_fields={
+                    "field": {
+                        "type": "string",
+                        "label": "OpenAPI 参数名",
+                        "placeholder": "例如 8:BizyAir_NanoBanana2.prompt",
+                    },
+                    "value": {
+                        "type": "json",
+                        "label": "参数值模板",
+                        "placeholder": '可填字符串、数字、布尔值、对象、数组，例如 "{prompt}"、"{random_seed}" 或 {"meta": ["{prompt}"]}',
+                    },
+                },
+                default=BizyAirOpenApiClient.default_parameter_mapping_config(),
+                description=(
+                    "OpenAPI input_values 参数映射表。每一项必须包含 field 和 value。"
+                    " 支持占位符：{prompt}、{aspect_ratio}、{resolution}、{random_seed}。"
+                    " value 支持 JSON 类型，可填写字符串、数字、布尔值、对象或数组。"
+                ),
+            ),
+        },
+        "bizyair_generate_image_plugin": {
             "timeout": ConfigField(
                 type=float,
                 default=180.0,

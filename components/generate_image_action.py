@@ -1,10 +1,17 @@
 import base64
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from src.common.logger import get_logger
 from src.plugin_system import BaseAction
 from src.plugin_system.base.component_types import ActionActivationType
-from ..bizyair_mcp_client import BizyAirMcpClient, BizyAirMcpError, BizyAirMcpProtocolError
+from ..clients import (
+    BizyAirMcpClient,
+    BizyAirMcpError,
+    BizyAirMcpProtocolError,
+    BizyAirOpenApiClient,
+    BizyAirOpenApiError,
+    BizyAirOpenApiProtocolError,
+)
 
 logger = get_logger("bizyair_generate_image_plugin")
 
@@ -38,27 +45,29 @@ class GenerateImageAction(BaseAction):
         if not prompt:
             return False, "[图片生成失败] 缺少 prompt 参数"
 
-        token = self._get_string_config("bizyair_generate_image_plugin.bearer_token", "")
+        token = self._get_string_config("bizyair_client.bearer_token", "")
         if not token:
             logger.warning(f"{self.log_prefix} 未配置 BizyAir bearer_token")
             return False, "[图片生成失败] 插件未配置 bearer_token"
 
+        provider = self._get_provider()
         aspect_ratio = self._get_aspect_ratio()
         resolution = self._get_resolution()
         timeout = self._get_timeout()
 
-        logger.info(f"{self.log_prefix} 开始生成图片: prompt={prompt!r}, aspect_ratio={aspect_ratio}, resolution={resolution}")
+        logger.info(
+            f"{self.log_prefix} 开始生成图片: provider={provider}, prompt={prompt!r}, "
+            f"aspect_ratio={aspect_ratio}, resolution={resolution}"
+        )
 
         try:
-            client = BizyAirMcpClient(
-                bearer_token=token,
-                mcp_url=self._get_optional_string_config("bizyair_generate_image_plugin.mcp_url", BizyAirMcpClient.MCP_URL, ),
-                timeout=timeout,
-            )
-            image_bytes = await client.generate_and_download(
+            image_bytes = await self._generate_image_bytes(
+                provider=provider,
+                token=token,
                 prompt=prompt,
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
+                timeout=timeout,
             )
         except ValueError as exc:
             logger.warning(f"{self.log_prefix} 图片参数非法: {exc}")
@@ -66,6 +75,9 @@ class GenerateImageAction(BaseAction):
         except (BizyAirMcpError, BizyAirMcpProtocolError) as exc:
             logger.error(f"{self.log_prefix} MCP 调用失败: {exc}")
             return False, f"[图片生成失败] MCP 调用失败: {exc}"
+        except (BizyAirOpenApiError, BizyAirOpenApiProtocolError) as exc:
+            logger.error(f"{self.log_prefix} OpenAPI 调用失败: {exc}")
+            return False, f"[图片生成失败] OpenAPI 调用失败: {exc}"
         except Exception as exc:
             logger.exception(f"{self.log_prefix} 生成图片时出现未知异常: {exc}")
             return False, f"[图片生成失败] {exc}"
@@ -124,6 +136,50 @@ class GenerateImageAction(BaseAction):
             timeout = 180.0
         return timeout if timeout > 0 else 180.0
 
+    def _get_provider(self) -> str:
+        provider = self._get_string_config("bizyair_client.provider", "mcp").lower()
+        return provider if provider in {"mcp", "openapi"} else "mcp"
+
+    async def _generate_image_bytes(
+        self,
+        provider: str,
+        token: str,
+        prompt: str,
+        aspect_ratio: str,
+        resolution: str,
+        timeout: float,
+    ) -> bytes:
+        if provider == "openapi":
+            parameter_bindings = BizyAirOpenApiClient.parse_parameter_bindings(
+                self.get_config(
+                    "bizyair_client.openapi_parameter_mappings",
+                    BizyAirOpenApiClient.default_parameter_mapping_config(),
+                )
+            )
+            client = BizyAirOpenApiClient(
+                bearer_token=token,
+                api_url=self._get_optional_string_config("bizyair_client.openapi_url", BizyAirOpenApiClient.API_URL),
+                web_app_id=self._get_int_config("bizyair_client.openapi_web_app_id", BizyAirOpenApiClient.WEB_APP_ID),
+                timeout=timeout,
+                parameter_bindings=parameter_bindings,
+            )
+            return await client.generate_and_download(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+            )
+
+        client = BizyAirMcpClient(
+            bearer_token=token,
+            mcp_url=self._get_optional_string_config("bizyair_client.mcp_url", BizyAirMcpClient.MCP_URL),
+            timeout=timeout,
+        )
+        return await client.generate_and_download(
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+        )
+
     def _get_string_config(self, key: str, default: str) -> str:
         value = self.get_config(key, default)
         if value is None:
@@ -140,6 +196,19 @@ class GenerateImageAction(BaseAction):
             return default
         text = str(value).strip()
         return text or default
+
+    def _get_int_config(self, key: str, default: int) -> int:
+        value = self.get_config(key, default)
+        if value is None or isinstance(value, dict):
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _get_raw_config(self, key: str, default: Any) -> Any:
+        value = self.get_config(key, default)
+        return default if value is None else value
 
     def _build_action_display(self, prompt: str, aspect_ratio: str, resolution: str) -> str:
         compact_prompt = prompt.replace("\n", " ").strip()
