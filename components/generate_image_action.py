@@ -27,7 +27,7 @@ class GenerateImageAction(BaseAction):
     associated_types = ["image", "text"]
 
     action_parameters = {
-        "prompt": "用于生成图片的描述词，应尽量具体，包含主体、风格、场景、构图等信息",
+        "prompt": "必填，用于生成图片的描述词。除非用户要求让你生成场景、构图、风格方面的细节，否则按原样传入用户的描述即可",
         "aspect_ratio": "可选，图片宽高比。若传入，则必须为 1:1、4:3、16:9、9:16、auto 中的一个。默认为 1:1",
         "resolution": "可选，图片分辨率。若传入，则必须为 1K、2K、4K、auto 中的一个。默认为 1k",
     }
