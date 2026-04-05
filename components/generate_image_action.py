@@ -69,6 +69,8 @@ class GenerateImageAction(BaseAction):
                 resolution=resolution,
                 timeout=timeout,
             )
+            image_size_mb = len(image_bytes) / (1024 * 1024)
+            logger.info(f"{self.log_prefix} 图片生成完成，已获取图片数据: size={image_size_mb:.2f}MB")
         except ValueError as exc:
             logger.warning(f"{self.log_prefix} 图片参数非法: {exc}")
             return False, f"[图片生成失败] 参数非法: {exc}"
@@ -86,11 +88,13 @@ class GenerateImageAction(BaseAction):
             return False, "[图片生成失败] 未获取到图片数据"
 
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        logger.info(f"{self.log_prefix} 图片数据已转换为 base64")
 
         if self.get_config("bizyair_generate_image_plugin.send_text_before_image", False):
             prefix_text = self._get_string_config("bizyair_generate_image_plugin.text_before_image", "我给你生成了一张图片。", )
             if prefix_text:
                 await self.send_text(prefix_text, storage_message=True)
+                logger.info(f"{self.log_prefix} 已发送图片前置文本")
 
         send_success = await self.send_image(image_base64, storage_message=True)
         if not send_success:
@@ -141,13 +145,13 @@ class GenerateImageAction(BaseAction):
         return provider if provider in {"mcp", "openapi"} else "mcp"
 
     async def _generate_image_bytes(
-        self,
-        provider: str,
-        token: str,
-        prompt: str,
-        aspect_ratio: str,
-        resolution: str,
-        timeout: float,
+            self,
+            provider: str,
+            token: str,
+            prompt: str,
+            aspect_ratio: str,
+            resolution: str,
+            timeout: float,
     ) -> bytes:
         if provider == "openapi":
             parameter_bindings = BizyAirOpenApiClient.parse_parameter_bindings(
