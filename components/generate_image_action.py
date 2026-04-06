@@ -2,6 +2,8 @@ import base64
 from typing import Any, Optional, Tuple
 
 from src.common.logger import get_logger
+from src.config.config import global_config
+from src.plugin_system.apis import generator_api
 from src.plugin_system import BaseAction
 from src.plugin_system.base.component_types import ActionActivationType
 from ..clients import (
@@ -79,19 +81,19 @@ class GenerateImageAction(BaseAction):
             logger.info(f"{self.log_prefix} 图片生成完成，已获取图片数据: size={image_size_mb:.2f}MB")
         except ValueError as exc:
             logger.warning(f"{self.log_prefix} 图片参数非法: {exc}")
-            return False, f"[图片生成失败] 参数非法: {exc}"
+            return await self._handle_failure(f"[图片生成失败] 参数非法: {exc}")
         except (BizyAirMcpError, BizyAirMcpProtocolError) as exc:
             logger.error(f"{self.log_prefix} MCP 调用失败: {exc}")
-            return False, f"[图片生成失败] MCP 调用失败: {exc}"
+            return await self._handle_failure(f"[图片生成失败] MCP 调用失败: {exc}")
         except (BizyAirOpenApiError, BizyAirOpenApiProtocolError) as exc:
             logger.error(f"{self.log_prefix} OpenAPI 调用失败: {exc}")
-            return False, f"[图片生成失败] OpenAPI 调用失败: {exc}"
+            return await self._handle_failure(f"[图片生成失败] OpenAPI 调用失败: {exc}")
         except Exception as exc:
             logger.exception(f"{self.log_prefix} 生成图片时出现未知异常: {exc}")
-            return False, f"[图片生成失败] {exc}"
+            return await self._handle_failure(f"[图片生成失败] {exc}")
 
         if not image_bytes:
-            return False, "[图片生成失败] 未获取到图片数据"
+            return await self._handle_failure("[图片生成失败] 未获取到图片数据")
 
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
         logger.info(f"{self.log_prefix} 图片数据已转换为 base64")
@@ -109,7 +111,7 @@ class GenerateImageAction(BaseAction):
                 action_prompt_display=self._build_action_display(prompt, aspect_ratio, resolution),
                 action_done=False,
             )
-            return False, "[图片生成失败] 图片发送失败"
+            return await self._handle_failure("[图片生成失败] 图片发送失败")
 
         await self.store_action_info(
             action_build_into_prompt=True,
@@ -146,9 +148,44 @@ class GenerateImageAction(BaseAction):
             timeout = 180.0
         return timeout if timeout > 0 else 180.0
 
+    def _get_enable_rewrite_failure_reply(self) -> bool:
+        return bool(self.get_config("bizyair_generate_image_plugin.enable_rewrite_failure_reply", True))
+
+    def _get_enable_splitter(self) -> bool:
+        return bool(self.get_config("bizyair_generate_image_plugin.enable_splitter", False))
+
     def _get_provider(self) -> str:
         provider = self._get_string_config("bizyair_client.provider", "mcp").lower()
         return provider if provider in {"mcp", "openapi"} else "mcp"
+
+    async def _handle_failure(self, raw_reply: str) -> Tuple[bool, str]:
+        await self._send_failure_reply(raw_reply)
+        return False, raw_reply
+
+    async def _send_failure_reply(self, raw_reply: str) -> None:
+        if self._get_enable_rewrite_failure_reply():
+            rewrite_data = {
+                "raw_reply": raw_reply,
+                "reason": "用户请求生成图片，但动作执行失败。请基于失败原因改写成简洁自然的中文回复。",
+            }
+            try:
+                result_status, data = await generator_api.rewrite_reply(
+                    chat_stream=self.chat_stream,
+                    reply_data=rewrite_data,
+                    enable_chinese_typo=global_config.chinese_typo.enable,
+                    enable_splitter=self._get_enable_splitter(),
+                )
+                if result_status and data and data.reply_set and data.reply_set.reply_data:
+                    for reply_seg in data.reply_set.reply_data:
+                        send_data = reply_seg.content
+                        if send_data:
+                            await self.send_text(send_data, storage_message=True)
+                    return
+                logger.warning(f"{self.log_prefix} 失败回复重写失败，回退原始消息")
+            except Exception as exc:
+                logger.exception(f"{self.log_prefix} 失败回复重写异常: {exc}")
+
+        await self.send_text(raw_reply, storage_message=True)
 
     async def _generate_image_bytes(
             self,

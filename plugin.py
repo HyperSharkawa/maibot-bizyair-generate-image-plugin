@@ -103,6 +103,16 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                 default="我给你生成了一张图片",
                 description="发送图片前的提示文本，仅在开启 send_text_before_image 时生效。",
             ),
+            "enable_rewrite_failure_reply": ConfigField(
+                type=bool,
+                default=True,
+                description="当图片生成 action 失败时，是否调用 LLM 将错误改写为自然语言后发送。",
+            ),
+            "enable_splitter": ConfigField(
+                type=bool,
+                default=False,
+                description="当启用失败回复重写时，是否对重写结果启用分段发送。",
+            ),
             "action_require": ConfigField(type=str,
                                           input_type="textarea",
                                           default="\n".join(GenerateImageAction.action_require),

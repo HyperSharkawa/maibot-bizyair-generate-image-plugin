@@ -44,6 +44,8 @@ git clone https://github.com/HyperSharkawa/maibot-bizyair-generate-image-plugin
 | `default_resolution` | `string` | `"1K"` | 未指定时的默认分辨率。可选值：`1K`、`2K`、`4K`、`auto`。 |
 | `send_text_before_image` | `bool` | `false` | 是否在发送图片前先发一段引导文本。默认关闭，避免与 reply action 重复。 |
 | `text_before_image` | `string` | `"我给你生成了一张图片。"` | 图片前的引导文本，仅在开启 `send_text_before_image` 时生效。 |
+| `enable_rewrite_failure_reply` | `bool` | `true` | 当图片生成 action 失败时，是否调用 LLM 将错误改写为自然语言后发送。 |
+| `enable_splitter` | `bool` | `false` | 当启用失败回复重写时，是否对重写结果启用分段发送。 |
 | `action_require` | `string` | 详见代码 | 该 action 的决策提示词，多行文本，用于辅助大模型在合适时选择该动作。 |
 
 > ⚙️ `bizyair_client.bearer_token` 必须填写才能使 action 正常工作。修改配置后需重启 MaiBot 生效。
@@ -145,6 +147,8 @@ value = "1"
 5. （可选）若开启 `send_text_before_image`，先发一段引导文本。
 6. 将图片以 `image` 类型发送到当前聊天会话。
 7. 记录 action 执行信息，供后续上下文使用。
+
+当调用失败时，插件会先构造原始错误信息；如果开启 `enable_rewrite_failure_reply`，则会调用 MaiBot 的回复重写，将错误改写成自然语言文本再发送；重写失败时发送原始错误信息。
 
 ## 示例场景
 
