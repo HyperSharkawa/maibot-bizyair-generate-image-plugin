@@ -14,6 +14,7 @@ from ..clients import (
     BizyAirOpenApiClient,
 )
 from ..services.custom_variable_resolver import CustomVariableResolver
+from ..services.openapi_input_value_builder import BizyAirOpenApiInputValueBuilder
 
 logger = get_logger("bizyair_generate_image_plugin")
 
@@ -82,6 +83,11 @@ class GenerateImageAction(BaseAction):
             required_variable_keys = custom_variable_resolver.collect_required_variable_keys(parameter_bindings_config)
             custom_variable_values = await custom_variable_resolver.resolve_required_variables(required_variable_keys)
             template_context = {**action_inputs, **custom_variable_values}
+            input_values = self._build_openapi_input_values(
+                parameter_bindings_config=parameter_bindings_config,
+                action_inputs=action_inputs,
+                template_context=template_context,
+            )
 
             token = str(self.get_config("bizyair_client.bearer_token", "")).strip()
             if not token:
@@ -94,9 +100,7 @@ class GenerateImageAction(BaseAction):
 
             image_bytes = await self._generate_image_bytes(
                 token=token,
-                action_inputs=action_inputs,
-                template_context=template_context,
-                parameter_bindings_config=parameter_bindings_config,
+                input_values=input_values,
                 timeout=timeout,
             )
             image_size_mb = len(image_bytes) / (1024 * 1024)
@@ -137,6 +141,7 @@ class GenerateImageAction(BaseAction):
         return CustomVariableResolver(
             raw_variables=self.get_config("bizyair_generate_image_plugin.custom_variables", []),
             action_inputs=action_inputs,
+            action_parameter_names=set(self.action_parameters.keys()),
             llm_value_factory=self._generate_variable_with_llm,
         )
 
@@ -245,22 +250,33 @@ class GenerateImageAction(BaseAction):
     async def _generate_image_bytes(
             self,
             token: str,
-            action_inputs: dict[str, Any],
-            template_context: dict[str, Any],
-            parameter_bindings_config: Any,
+            input_values: dict[str, Any],
             timeout: float,
     ) -> bytes:
         """创建 OpenAPI 客户端并返回生成后的图片字节"""
-        parameter_bindings = BizyAirOpenApiClient.parse_parameter_bindings(
-            parameter_bindings_config)
         client = BizyAirOpenApiClient(
             bearer_token=token,
             api_url=str(self.get_config("bizyair_client.openapi_url", BizyAirOpenApiClient.API_URL)).strip(),
             web_app_id=int(self.get_config("bizyair_client.openapi_web_app_id", BizyAirOpenApiClient.WEB_APP_ID)),
             timeout=timeout,
-            parameter_bindings=parameter_bindings,
         )
-        return await client.generate_and_download(action_inputs=action_inputs, template_context=template_context)
+        return await client.generate_and_download(input_values=input_values)
+
+    def _build_openapi_input_values(
+            self,
+            parameter_bindings_config: Any,
+            action_inputs: dict[str, Any],
+            template_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """根据配置、动作输入和变量上下文构造 OpenAPI input_values"""
+        parameter_bindings = BizyAirOpenApiInputValueBuilder.parse_parameter_bindings(parameter_bindings_config)
+        return BizyAirOpenApiInputValueBuilder.build_input_values(
+            parameter_bindings=parameter_bindings,
+            template_context=template_context,
+            action_inputs=action_inputs,
+            action_parameter_names=set(self.action_parameters.keys()),
+            required_action_parameters=set(self.required_action_parameters),
+        )
 
     def _build_action_display(self, action_inputs: dict[str, Any]) -> str:
         """构造写入动作记录的简短展示文本"""

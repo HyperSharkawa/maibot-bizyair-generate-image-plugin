@@ -36,9 +36,9 @@ DEFAULT_CUSTOM_VARIABLES = [
 ]
 
 DEFAULT_OPENAPI_PARAMETER_MAPPINGS = [
-    {"field": "18:BizyAir_NanoBananaProOfficial.prompt", "value_type": "string", "value": "{english_prompt}"},
-    {"field": "18:BizyAir_NanoBananaProOfficial.aspect_ratio", "value_type": "string", "value": "{aspect_ratio}"},
-    {"field": "18:BizyAir_NanoBananaProOfficial.resolution", "value_type": "string", "value": "{resolution}"},
+    {"field": "18:BizyAir_NanoBananaProOfficial.prompt", "value_type": "string", "value": "{english_prompt}", "send_if_empty": False},
+    {"field": "18:BizyAir_NanoBananaProOfficial.aspect_ratio", "value_type": "string", "value": "{aspect_ratio}", "send_if_empty": False},
+    {"field": "18:BizyAir_NanoBananaProOfficial.resolution", "value_type": "string", "value": "{resolution}", "send_if_empty": False},
 ]
 
 
@@ -98,12 +98,18 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                         "input_type": "textarea",
                         "placeholder": '可填字符串、数字、布尔值、对象、数组，例如 "{prompt}"、"{random_seed}" 或 {"meta": ["{prompt}"]}',
                     },
+                    "send_if_empty": {
+                        "type": "bool",
+                        "label": "值为空时仍传参",
+                        "default": False,
+                    },
                 },
                 default=DEFAULT_OPENAPI_PARAMETER_MAPPINGS,
                 description=(
-                    "OpenAPI input_values 参数映射表。每一项必须包含 field、value_type 和 value。"
+                    "OpenAPI input_values 参数映射表。每一项必须包含 field、value_type、value。"
                     " 支持引用 action_parameters 中定义的任意参数占位符，以及 {random_seed}。"
                     " value 会按 value_type 强制转换为 string、int、boolean 或反序列化为 json。"
+                    " 当解析结果为空字符串、null、空数组或空对象时，默认跳过该参数；可通过 send_if_empty 控制是否仍然传参。"
                 ),
             ),
         },

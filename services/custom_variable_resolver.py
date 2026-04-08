@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from src.common.logger import get_logger
-from ..clients import BizyAirOpenApiClient
+from .openapi_input_value_builder import BizyAirOpenApiInputValueBuilder
 
 logger = get_logger("bizyair_generate_image_plugin")
 
@@ -29,10 +29,12 @@ class CustomVariableResolver:
             self,
             raw_variables: Any,
             action_inputs: dict[str, Any],
+            action_parameter_names: set[str],
             llm_value_factory: Callable[[str], Awaitable[str]],
     ) -> None:
         """初始化变量解析器并预解析变量定义"""
         self.action_inputs = action_inputs
+        self.action_parameter_names = set(action_parameter_names)
         self.llm_value_factory = llm_value_factory
         self.variable_definitions = self._parse_variable_definitions(raw_variables)
 
@@ -76,7 +78,7 @@ class CustomVariableResolver:
             return {}
 
         definitions: dict[str, CustomVariableDefinition] = {}
-        reserved_names = set(self.action_inputs.keys()) | self.RESERVED_NAMES
+        reserved_names = self.action_parameter_names | self.RESERVED_NAMES
         for index, item in enumerate(raw_variables):
             if not isinstance(item, dict):
                 raise ValueError(f"custom_variables[{index}] 必须是对象")
@@ -114,7 +116,7 @@ class CustomVariableResolver:
         selected_value = ""
         if definition.values:
             selected_value = str(
-                BizyAirOpenApiClient.resolve_template_value_static(
+                BizyAirOpenApiInputValueBuilder.resolve_template_value_static(
                     random.choice(definition.values),
                     self.action_inputs,
                 )
@@ -130,10 +132,9 @@ class CustomVariableResolver:
     def _extract_variable_placeholders(self, value: Any) -> set[str]:
         """从模板值中提取自定义变量占位符"""
         placeholder_names = self._extract_all_placeholders(value)
-        action_input_names = set(self.action_inputs.keys())
         return {
             name for name in placeholder_names
-            if name not in action_input_names and name not in self.RESERVED_NAMES
+            if name not in self.action_parameter_names and name not in self.RESERVED_NAMES
         }
 
     def _extract_all_placeholders(self, value: Any) -> set[str]:

@@ -1,5 +1,6 @@
 from .base import BizyAirBaseClient, BizyAirImageResult, BizyAirOpenApiOutput
-from .openapi_client import BizyAirOpenApiClient, BizyAirOpenApiError, BizyAirOpenApiProtocolError
+from .openapi_client import BizyAirOpenApiClient
+from .openapi_models import BizyAirOpenApiError, BizyAirOpenApiParameterBinding, BizyAirOpenApiProtocolError, BizyAirOpenApiResponse
 
 __all__ = [
     "BizyAirBaseClient",
@@ -7,5 +8,7 @@ __all__ = [
     "BizyAirOpenApiOutput",
     "BizyAirOpenApiClient",
     "BizyAirOpenApiError",
+    "BizyAirOpenApiParameterBinding",
     "BizyAirOpenApiProtocolError",
+    "BizyAirOpenApiResponse",
 ]
