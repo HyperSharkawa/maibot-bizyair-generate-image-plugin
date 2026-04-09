@@ -7,7 +7,7 @@ from typing import Any
 class TemplatePlaceholderUtils:
     """模板占位符扫描与分类工具"""
 
-    PLACEHOLDER_PATTERN = re.compile(r"\{([^{}]+)\}")
+    PLACEHOLDER_PATTERN = re.compile(r"\{([^{}]+)}")
 
     @classmethod
     def extract_placeholder_names(cls, value: str) -> list[str]:
@@ -53,6 +53,24 @@ class TemplatePlaceholderUtils:
         return {
             name for name in cls.extract_placeholder_names_from_any(value)
             if name in builtin_names
+        }
+
+    @classmethod
+    def collect_non_builtin_placeholder_names(
+            cls,
+            value: Any,
+            builtin_names: set[str] | frozenset[str],
+    ) -> set[str]:
+        """
+        从模板值中提取所有非内置变量的占位符名
+
+        :param value: Any，待扫描的模板值
+        :param builtin_names: set[str] | frozenset[str]，内置变量名称集合
+        :return: set[str]，排除内置变量后的所有占位符名集合
+        """
+        return {
+            name for name in cls.extract_placeholder_names_from_any(value)
+            if name not in builtin_names
         }
 
     @classmethod

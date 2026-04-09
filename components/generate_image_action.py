@@ -16,6 +16,7 @@ from ..services import permission_manager
 from ..services.builtin_variable_provider import BuiltinVariableProvider
 from ..services.custom_variable_resolver import CustomVariableResolver
 from ..services.openapi_input_value_builder import BizyAirOpenApiInputValueBuilder
+from ..services.variable_dependency_resolver import VariableDependencyResolver
 
 logger = get_logger("bizyair_generate_image_plugin")
 
@@ -49,6 +50,7 @@ class GenerateImageAction(BaseAction):
         "如果用户明确要求你自由发挥、帮他想生图描述词、补充设定，或明确表示让你决定场景/构图/画风/细节，则应由你生成或补全 prompt；但用户已经明确指定的主体、角色、元素、动作、构图要求不得擅自修改",
         "如果用户的描述中包含“随意”“随便”“随机”等表示某些维度可自由决定的意思，则只对这些被放开的维度自行补全细节；用户已明确写出的内容必须保留，不得改动，例如用户指定了角色是“初音未来”，则你只能补充场景、画风等未指定或被明确放开的部分",
         "如果用户的要求过于宽泛，只有大方向、主题或少量标签，无法直接形成高质量生图描述，则应在不违背用户已给约束的前提下，自动补充合理的主体细节、场景、构图、风格、光线、镜头或氛围等内容，整理成更完整的 prompt",
+        "prompt 中不允许填写画风相关的提示词，画风应填入 `style` 参数。即使用户明确提出要原样传入提示词，你也应该单独把画风的部分拆出来放到 `style` 参数中",
         "是否需要你补充、总结或改写 prompt，只取决于用户给出的图片描述是否留有明显空白、是否授权你自由发挥；不要把“尽量生成得更好”当作改写详细原始描述的理由"
     ]
 
@@ -78,18 +80,37 @@ class GenerateImageAction(BaseAction):
                 llm_value_factory=self._generate_variable_with_llm,
                 builtin_variable_provider=builtin_variable_provider,
             )
-            required_variable_keys = custom_variable_resolver.collect_required_variable_keys(parameter_bindings_config)
-            custom_variable_values = await custom_variable_resolver.resolve_required_variables(required_variable_keys)
-            template_context = {**action_inputs, **custom_variable_values}
-            parameter_bindings = BizyAirOpenApiInputValueBuilder.parse_parameter_bindings(parameter_bindings_config)
+            direct_variable_keys = custom_variable_resolver.collect_required_variable_keys(parameter_bindings_config)
+            builtin_names = BuiltinVariableProvider.get_default_variable_names()
+            required_variable_keys = VariableDependencyResolver.compute_required_variable_keys(
+                direct_keys=direct_variable_keys,
+                action_inputs=action_inputs,
+                custom_variable_definitions=custom_variable_resolver.variable_definitions,
+                action_parameter_names=set(self.action_parameters.keys()),
+                builtin_names=builtin_names,
+            )
             required_builtin_names = BizyAirOpenApiInputValueBuilder.collect_builtin_placeholder_names_from_bindings(
                 parameter_bindings_config
             )
             builtin_placeholder_values = builtin_variable_provider.build_placeholder_values(required_builtin_names)
+            dependency_resolver = VariableDependencyResolver(
+                action_inputs=action_inputs,
+                custom_variable_definitions=custom_variable_resolver.variable_definitions,
+                action_parameter_names=set(self.action_parameters.keys()),
+                builtin_names=builtin_names,
+                required_custom_variable_keys=required_variable_keys,
+            )
+            resolved_action_inputs, custom_variable_values = await dependency_resolver.resolve_all(
+                builtin_placeholder_values=builtin_placeholder_values,
+                llm_value_factory=self._generate_variable_with_llm,
+                builtin_variable_provider=builtin_variable_provider,
+            )
+            template_context = {**resolved_action_inputs, **custom_variable_values}
+            parameter_bindings = BizyAirOpenApiInputValueBuilder.parse_parameter_bindings(parameter_bindings_config)
             input_values = BizyAirOpenApiInputValueBuilder.build_input_values(
                 parameter_bindings=parameter_bindings,
                 template_context=template_context,
-                action_inputs=action_inputs,
+                action_inputs=resolved_action_inputs,
                 action_parameter_names=set(self.action_parameters.keys()),
                 required_action_parameters=set(self.required_action_parameters),
                 builtin_placeholder_values=builtin_placeholder_values,
@@ -102,7 +123,7 @@ class GenerateImageAction(BaseAction):
             timeout = float(str(self.get_config("bizyair_client.timeout", 180.0)).strip())
 
             logger.info(
-                f"{self.log_prefix} 开始生成图片: provider=openapi, active_preset={active_preset!r}, app_id={app_id}, action_inputs={action_inputs!r}, custom_variable_values={custom_variable_values!r}, timeout={timeout}")
+                f"{self.log_prefix} 开始生成图片: provider=openapi, active_preset={active_preset!r}, app_id={app_id}, action_inputs={resolved_action_inputs!r}, custom_variable_values={custom_variable_values!r}, timeout={timeout}")
 
             image_bytes = await self._generate_image_bytes(
                 token=token,

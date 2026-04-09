@@ -17,6 +17,11 @@ DEFAULT_ACTION_PARAMETERS = [
         "required": "必填",
     },
     {
+        "name": "style",
+        "description": "必填，用于生图的画风。内置 2 种画风，分别为 “二次元画风” 和 “写实风” 。你可以直接在该参数中使用自然语言描述一种画风，也可以直接使用内置的模板。要使用内置画风，必须使用 “{二次元画风}” 这种用大括号括起来的变量引用形式。除非用户有具体要求，否则你应该优先使用优化过的内置画风提示词",
+        "required": "必填",
+    },
+    {
         "name": "aspect_ratio",
         "description": "可选，图片宽高比。若传入，则必须为 1:1、4:3、16:9、9:16、auto 中的一个。默认为 1:1",
         "required": "选填",
@@ -32,9 +37,21 @@ DEFAULT_CUSTOM_VARIABLES = [
     {
         "key": "english_prompt",
         "mode": "llm",
-        "values": '["这是一个用于画图的提示词。请将其变成更适合画图ai的英文标签形式。你的输出会被直接输入到绘图ai中，因此请直接输出内容，不要添加多余的解释。以下是提示词: {prompt}"]',
+        "values": '["这是一个用于画图的提示词。请将其变成更适合画图ai的英文标签形式。你的输出会被直接输入到绘图ai中，因此请直接输出内容，不要添加多余的解释。以下是图片要求的画风: {style}\n\n以下是生图的描述词: {prompt}"]',
         "probability": 1.0,
-    }
+    },
+    {
+        "key": "二次元画风",
+        "mode": "literal",
+        "values": '["masterpiece, best quality, ultra-detailed, digital illustration, pixiv style, anime aesthetic, vibrant color palette, clean lineart, soft cel shading, volumetric lighting, cinematic atmosphere, sharp focus, high-resolution 2D art, refined brushwork, colorful glow, intricate details."]',
+        "probability": 1.0,
+    },
+    {
+        "key": "写实风",
+        "mode": "literal",
+        "values": '["masterpiece, best quality, photorealistic, hyper-realistic, 8k UHD, RAW photo, professional photography, cinematic lighting, ray tracing, global illumination, realistic textures, subsurface scattering, shallow depth of field, sharp focus, film grain, high dynamic range, optical lens flare."]"]',
+        "probability": 1.0,
+    },
 ]
 
 BUILTIN_VARIABLE_DESCRIPTIONS = [
@@ -312,7 +329,7 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                     "values": {
                         "type": "string",
                         "label": "候选值列表",
-                        "placeholder": '例如 ["二次元插画", "seed={random_seed}", "参考上下文：{recent_chat_context_10}"] ，支持引用 action_inputs 中的 {参数名} 和内置变量',
+                        "placeholder": '例如 ["二次元插画", "seed={random_seed}", "{other_var} 补充内容"] ，支持引用 action_inputs 中的 {参数名}、内置变量和其他自定义变量',
                     },
                     "probability": {
                         "type": "float",
@@ -323,7 +340,8 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                 default=DEFAULT_CUSTOM_VARIABLES,
                 description=(
                     "自定义变量列表。支持 literal 和 llm 两种模式。两种模式都会先从 values 中随机抽一条，如果是 llm 模式则会调用 llm 生成变量值。"
-                    "支持引用 action_inputs 中的 {参数名} 和内置变量占位符，不允许变量之间互相引用。"
+                    "支持引用 action_inputs 中的 {参数名}、内置变量占位符以及其他自定义变量的 {变量名}（禁止循环引用）。"
+                    " 决策参数的值中同样支持引用自定义变量占位符，系统会按依赖顺序自动解析。"
                     f" 当前内置变量包括：{' '.join(BUILTIN_VARIABLE_DESCRIPTIONS)}"
                 ),
             ),
@@ -338,22 +356,22 @@ class BizyAirGenerateImagePlugin(BasePlugin):
             "llm_list": ConfigField(
                 type=list,
                 item_type="string",
-                default=[],
+                default=["gemini-3-flash","qwen3.6-plus","doubao-seed-2-0-pro"],
                 description="自定义变量生成时使用的模型名称列表。为空时使用 llm_group 对应任务配置。",
             ),
             "max_tokens": ConfigField(
                 type=int,
-                default=512,
+                default=10000,
                 description="自定义变量生成时使用的最大输出 token 数",
             ),
             "temperature": ConfigField(
                 type=float,
-                default=0.7,
+                default=1,
                 description="自定义变量生成时使用的温度",
             ),
             "slow_threshold": ConfigField(
                 type=float,
-                default=30.0,
+                default=90.0,
                 description="自定义变量生成时使用的慢请求阈值，单位秒",
             ),
             "selection_strategy": ConfigField(

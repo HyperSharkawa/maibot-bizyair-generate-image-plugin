@@ -4,6 +4,7 @@ from .openapi_input_value_builder import BizyAirOpenApiInputValueBuilder
 from .action_parameter_utils import build_action_parameters
 from .permission_manager import permission_manager
 from .template_placeholder_utils import TemplatePlaceholderUtils
+from .variable_dependency_resolver import VariableDependencyResolver
 
 __all__ = [
 	"BuiltinVariableProvider",
@@ -12,4 +13,5 @@ __all__ = [
 	"build_action_parameters",
 	"permission_manager",
 	"TemplatePlaceholderUtils",
+	"VariableDependencyResolver",
 ]
