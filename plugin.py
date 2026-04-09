@@ -49,7 +49,7 @@ DEFAULT_CUSTOM_VARIABLES = [
     {
         "key": "写实风",
         "mode": "literal",
-        "values": '["masterpiece, best quality, photorealistic, hyper-realistic, 8k UHD, RAW photo, professional photography, cinematic lighting, ray tracing, global illumination, realistic textures, subsurface scattering, shallow depth of field, sharp focus, film grain, high dynamic range, optical lens flare."]"]',
+        "values": '["masterpiece, best quality, photorealistic, hyper-realistic, 8k UHD, RAW photo, professional photography, cinematic lighting, ray tracing, global illumination, realistic textures, subsurface scattering, shallow depth of field, sharp focus, film grain, high dynamic range, optical lens flare."]',
         "probability": 1.0,
     },
 ]
