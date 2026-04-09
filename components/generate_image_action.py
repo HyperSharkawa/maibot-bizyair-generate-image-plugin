@@ -6,15 +6,15 @@ from src.common.logger import get_logger
 from src.config.api_ada_configs import TaskConfig
 from src.config.config import global_config
 from src.config.config import model_config
-from src.llm_models.utils_model import LLMRequest
 from src.plugin_system import BaseAction
-from src.plugin_system.apis import generator_api
+from src.plugin_system.apis import generator_api, llm_api
 from src.plugin_system.base.component_types import ActionActivationType
 from ..clients import (
     BizyAirOpenApiClient,
 )
 from ..services.custom_variable_resolver import CustomVariableResolver
 from ..services.openapi_input_value_builder import BizyAirOpenApiInputValueBuilder
+from ..services.action_parameter_utils import build_action_parameters
 
 logger = get_logger("bizyair_generate_image_plugin")
 
@@ -28,6 +28,7 @@ class GenerateImageAction(BaseAction):
     activation_type = ActionActivationType.ALWAYS
     parallel_action = True
     associated_types = ["image", "text"]
+    active_preset = "default"
 
     action_parameters = {
         "prompt": "必填，用于生成图片的描述词",
@@ -50,56 +51,49 @@ class GenerateImageAction(BaseAction):
         "是否需要你补充、总结或改写 prompt，只取决于用户给出的图片描述是否留有明显空白、是否授权你自由发挥；不要把“尽量生成得更好”当作改写详细原始描述的理由"
     ]
 
-    @classmethod
-    def set_action_parameters(cls, raw_parameters: Any) -> None:
-        """根据配置更新动作参数定义与必填参数集合"""
-        if not isinstance(raw_parameters, list) or not raw_parameters:
-            raise ValueError("action_parameters 必须是非空列表")
-
-        action_parameters: dict[str, str] = {}
-        required_parameters: set[str] = set()
-        for index, item in enumerate(raw_parameters):
-            if not isinstance(item, dict):
-                raise ValueError(f"action_parameters[{index}] 必须是对象")
-
-            name = cls._normalize_parameter_name(item.get("name"), f"action_parameters[{index}].name")
-            description = cls._normalize_parameter_description(item.get("description"), f"action_parameters[{index}].description")
-            if name in action_parameters:
-                raise ValueError(f"action_parameters[{index}].name 重复: {name}")
-
-            action_parameters[name] = description
-            if cls._is_parameter_required(item.get("required", "选填"), f"action_parameters[{index}].required"):
-                required_parameters.add(name)
-
-        cls.action_parameters = action_parameters
-        cls.required_action_parameters = required_parameters
-
     async def execute(self) -> Tuple[bool, str]:
         """执行生图流程并在失败时返回完整错误信息"""
         try:
             action_inputs = self._collect_action_inputs()
-            parameter_bindings_config = self.get_config("bizyair_client.openapi_parameter_mappings", [])
-            custom_variable_resolver = self._build_custom_variable_resolver(action_inputs)
+            active_preset = str(self.active_preset).strip()
+            app_id = self._resolve_active_app_id(active_preset)
+            all_parameter_bindings_config = self.get_config("bizyair_client.openapi_parameter_mappings", [])
+            parameter_bindings_config = self._filter_parameter_bindings_by_preset(
+                all_parameter_bindings_config, active_preset
+            )
+            builtin_placeholder_values = BizyAirOpenApiInputValueBuilder.build_builtin_placeholder_values()
+            custom_variable_resolver = CustomVariableResolver(
+                raw_variables=self.get_config("custom_variables_config.custom_variables", []),
+                action_inputs=action_inputs,
+                action_parameter_names=set(self.action_parameters.keys()),
+                llm_value_factory=self._generate_variable_with_llm,
+                builtin_placeholder_values=builtin_placeholder_values,
+            )
             required_variable_keys = custom_variable_resolver.collect_required_variable_keys(parameter_bindings_config)
             custom_variable_values = await custom_variable_resolver.resolve_required_variables(required_variable_keys)
             template_context = {**action_inputs, **custom_variable_values}
-            input_values = self._build_openapi_input_values(
-                parameter_bindings_config=parameter_bindings_config,
-                action_inputs=action_inputs,
+            parameter_bindings = BizyAirOpenApiInputValueBuilder.parse_parameter_bindings(parameter_bindings_config)
+            input_values = BizyAirOpenApiInputValueBuilder.build_input_values(
+                parameter_bindings=parameter_bindings,
                 template_context=template_context,
+                action_inputs=action_inputs,
+                action_parameter_names=set(self.action_parameters.keys()),
+                required_action_parameters=set(self.required_action_parameters),
+                builtin_placeholder_values=builtin_placeholder_values,
             )
 
             token = str(self.get_config("bizyair_client.bearer_token", "")).strip()
             if not token:
                 raise ValueError("插件未配置 bearer_token")
 
-            timeout = float(str(self.get_config("bizyair_generate_image_plugin.timeout", 180.0)).strip())
+            timeout = float(str(self.get_config("bizyair_client.timeout", 180.0)).strip())
 
             logger.info(
-                f"{self.log_prefix} 开始生成图片: provider=openapi, action_inputs={action_inputs!r}, custom_variable_values={custom_variable_values!r}, timeout={timeout}")
+                f"{self.log_prefix} 开始生成图片: provider=openapi, active_preset={active_preset!r}, app_id={app_id}, action_inputs={action_inputs!r}, custom_variable_values={custom_variable_values!r}, timeout={timeout}")
 
             image_bytes = await self._generate_image_bytes(
                 token=token,
+                app_id=app_id,
                 input_values=input_values,
                 timeout=timeout,
             )
@@ -136,27 +130,17 @@ class GenerateImageAction(BaseAction):
             await self._send_failure_reply(raw_reply)
             return False, raw_reply
 
-    def _build_custom_variable_resolver(self, action_inputs: dict[str, Any]) -> CustomVariableResolver:
-        """构造按需解析自定义变量的解析器"""
-        return CustomVariableResolver(
-            raw_variables=self.get_config("bizyair_generate_image_plugin.custom_variables", []),
-            action_inputs=action_inputs,
-            action_parameter_names=set(self.action_parameters.keys()),
-            llm_value_factory=self._generate_variable_with_llm,
-        )
-
     async def _generate_variable_with_llm(self, prompt: str) -> str:
         """使用变量 LLM 配置生成最终变量值"""
-        llm_request = LLMRequest(
-            model_set=self._build_variable_task_config(),
+        logger.info(f"[自定义变量] 调用 LLM 生成变量值，提示词: {prompt!r}")
+        success, content, _, _ = await llm_api.generate_with_model(
+            prompt=prompt,
+            model_config=self._build_variable_task_config(),
             request_type="bizyair_custom_variable_generation",
         )
-
-        content, _ = await llm_request.generate_response_async(
-            prompt=prompt,
-            temperature=float(str(self.get_config("variable_llm_config.temperature", 0.7)).strip()),
-            max_tokens=int(str(self.get_config("variable_llm_config.max_tokens", 512)).strip()),
-        )
+        logger.info(f"[自定义变量] LLM 原始输出: {content!r}")
+        if not success:
+            raise RuntimeError(f"LLM 生成自定义变量失败: {content}")
         return content.strip()
 
     def _build_variable_task_config(self) -> TaskConfig:
@@ -195,32 +179,6 @@ class GenerateImageAction(BaseAction):
 
         return collected
 
-    @staticmethod
-    def _normalize_parameter_name(value: Any, field_name: str) -> str:
-        """标准化参数名并校验不能为空"""
-        text = "" if value is None else str(value).strip()
-        if not text:
-            raise ValueError(f"{field_name} 不能为空")
-        return text
-
-    @staticmethod
-    def _is_parameter_required(value: Any, field_name: str) -> bool:
-        """解析参数必填配置"""
-        text = "" if value is None else str(value).strip()
-        if text == "必填":
-            return True
-        if text in {"", "选填"}:
-            return False
-        raise ValueError(f"{field_name} 只能是“选填”或“必填”")
-
-    @staticmethod
-    def _normalize_parameter_description(value: Any, field_name: str) -> str:
-        """标准化参数描述并校验不能为空"""
-        text = "" if value is None else str(value).strip()
-        if not text:
-            raise ValueError(f"{field_name} 不能为空")
-        return text
-
     async def _send_failure_reply(self, raw_reply: str) -> None:
         """发送失败提示并按配置决定是否改写回复"""
         if bool(self.get_config("bizyair_generate_image_plugin.enable_rewrite_failure_reply", True)):
@@ -247,9 +205,48 @@ class GenerateImageAction(BaseAction):
 
         await self.send_text(raw_reply, storage_message=True)
 
+    def _resolve_active_app_id(self, active_preset: str) -> int:
+        """从 app_presets 中查找 active_preset 对应的 app_id"""
+        if not active_preset:
+            raise ValueError("active_preset 不能为空，请在配置中设置 active_preset")
+        app_presets = self.get_config("bizyair_client.app_presets", [])
+        if not isinstance(app_presets, list) or not app_presets:
+            raise ValueError("app_presets 未配置或为空列表")
+        for index, preset in enumerate(app_presets):
+            if not isinstance(preset, dict):
+                raise ValueError(f"app_presets[{index}] 必须是对象")
+            name = str(preset.get("preset_name", "")).strip()
+            if name == active_preset:
+                raw_app_id = preset.get("app_id")
+                if raw_app_id is None:
+                    raise ValueError(f"app_presets 中 preset_name={active_preset!r} 的 app_id 为空")
+                return int(raw_app_id)
+        raise ValueError(f"app_presets 中找不到 preset_name={active_preset!r}，请检查 active_preset 配置")
+
+    @staticmethod
+    def _filter_parameter_bindings_by_preset(
+            all_bindings: Any,
+            active_preset: str,
+    ) -> list:
+        """过滤出与 active_preset 匹配的参数映射条目"""
+        if not isinstance(all_bindings, list):
+            return []
+        result = []
+        for index, item in enumerate(all_bindings):
+            if not isinstance(item, dict):
+                raise ValueError(f"openapi_parameter_mappings[{index}] 必须是对象")
+            raw_preset_name = item.get("preset_name", "")
+            if not raw_preset_name or not str(raw_preset_name).strip():
+                raise ValueError(f"openapi_parameter_mappings[{index}].preset_name 不能为空")
+            preset_names = {p.strip() for p in str(raw_preset_name).split(",") if p.strip()}
+            if active_preset in preset_names:
+                result.append(item)
+        return result
+
     async def _generate_image_bytes(
             self,
             token: str,
+            app_id: int,
             input_values: dict[str, Any],
             timeout: float,
     ) -> bytes:
@@ -257,26 +254,10 @@ class GenerateImageAction(BaseAction):
         client = BizyAirOpenApiClient(
             bearer_token=token,
             api_url=str(self.get_config("bizyair_client.openapi_url", BizyAirOpenApiClient.API_URL)).strip(),
-            web_app_id=int(self.get_config("bizyair_client.openapi_web_app_id", BizyAirOpenApiClient.WEB_APP_ID)),
+            web_app_id=app_id,
             timeout=timeout,
         )
         return await client.generate_and_download(input_values=input_values)
-
-    def _build_openapi_input_values(
-            self,
-            parameter_bindings_config: Any,
-            action_inputs: dict[str, Any],
-            template_context: dict[str, Any],
-    ) -> dict[str, Any]:
-        """根据配置、动作输入和变量上下文构造 OpenAPI input_values"""
-        parameter_bindings = BizyAirOpenApiInputValueBuilder.parse_parameter_bindings(parameter_bindings_config)
-        return BizyAirOpenApiInputValueBuilder.build_input_values(
-            parameter_bindings=parameter_bindings,
-            template_context=template_context,
-            action_inputs=action_inputs,
-            action_parameter_names=set(self.action_parameters.keys()),
-            required_action_parameters=set(self.required_action_parameters),
-        )
 
     def _build_action_display(self, action_inputs: dict[str, Any]) -> str:
         """构造写入动作记录的简短展示文本"""

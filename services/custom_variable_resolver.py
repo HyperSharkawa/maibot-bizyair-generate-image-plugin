@@ -23,7 +23,6 @@ class CustomVariableResolver:
     """按需解析自定义变量"""
 
     PLACEHOLDER_PATTERN = re.compile(r"\{([^{}]+)\}")
-    RESERVED_NAMES = {"random_seed"}
 
     def __init__(
             self,
@@ -31,11 +30,13 @@ class CustomVariableResolver:
             action_inputs: dict[str, Any],
             action_parameter_names: set[str],
             llm_value_factory: Callable[[str], Awaitable[str]],
+            builtin_placeholder_values: dict[str, Any] | None = None,
     ) -> None:
         """初始化变量解析器并预解析变量定义"""
         self.action_inputs = action_inputs
         self.action_parameter_names = set(action_parameter_names)
         self.llm_value_factory = llm_value_factory
+        self.builtin_placeholder_values = dict(builtin_placeholder_values or {})
         self.variable_definitions = self._parse_variable_definitions(raw_variables)
 
     def collect_required_variable_keys(self, raw_bindings: Any) -> set[str]:
@@ -78,7 +79,7 @@ class CustomVariableResolver:
             return {}
 
         definitions: dict[str, CustomVariableDefinition] = {}
-        reserved_names = self.action_parameter_names | self.RESERVED_NAMES
+        reserved_names = self.action_parameter_names | BizyAirOpenApiInputValueBuilder.BUILTIN_PLACEHOLDER_NAMES
         for index, item in enumerate(raw_variables):
             if not isinstance(item, dict):
                 raise ValueError(f"custom_variables[{index}] 必须是对象")
@@ -119,6 +120,7 @@ class CustomVariableResolver:
                 BizyAirOpenApiInputValueBuilder.resolve_template_value_static(
                     random.choice(definition.values),
                     self.action_inputs,
+                    builtin_placeholder_values=self.builtin_placeholder_values,
                 )
             ).strip()
 
@@ -134,7 +136,7 @@ class CustomVariableResolver:
         placeholder_names = self._extract_all_placeholders(value)
         return {
             name for name in placeholder_names
-            if name not in self.action_parameter_names and name not in self.RESERVED_NAMES
+            if name not in self.action_parameter_names and name not in BizyAirOpenApiInputValueBuilder.BUILTIN_PLACEHOLDER_NAMES
         }
 
     def _extract_all_placeholders(self, value: Any) -> set[str]:

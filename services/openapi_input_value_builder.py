@@ -15,6 +15,7 @@ class BizyAirOpenApiInputValueBuilder:
     DEFAULT_RANDOM_SEED_MIN = 0
     DEFAULT_RANDOM_SEED_MAX = 2147483647
     SEED_PLACEHOLDER = "{random_seed}"
+    BUILTIN_PLACEHOLDER_NAMES = frozenset({"random_seed"})
 
     @classmethod
     def parse_parameter_bindings(cls, raw_bindings: Any) -> list[BizyAirOpenApiParameterBinding]:
@@ -52,12 +53,16 @@ class BizyAirOpenApiInputValueBuilder:
             action_inputs: dict[str, Any],
             action_parameter_names: set[str],
             required_action_parameters: set[str],
+            builtin_placeholder_values: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """根据映射规则构造 input_values"""
         if not isinstance(template_context, dict) or not template_context:
             raise ValueError("template_context 必须是非空对象")
 
-        placeholder_values = cls._build_placeholder_values(template_context)
+        placeholder_values = cls._build_placeholder_values(
+            template_context,
+            builtin_placeholder_values=builtin_placeholder_values,
+        )
         input_values: dict[str, Any] = {}
         for binding in parameter_bindings:
             resolved_value = cls._resolve_template_value(
@@ -73,17 +78,34 @@ class BizyAirOpenApiInputValueBuilder:
         return input_values
 
     @classmethod
-    def resolve_template_value_static(cls, value_template: Any, template_context: dict[str, Any]) -> Any:
+    def resolve_template_value_static(
+            cls,
+            value_template: Any,
+            template_context: dict[str, Any],
+            builtin_placeholder_values: dict[str, Any] | None = None,
+    ) -> Any:
         """基于模板上下文静态解析模板值"""
-        placeholder_values = {f"{{{key}}}": value for key, value in template_context.items()}
+        placeholder_values = cls._build_placeholder_values(
+            template_context,
+            builtin_placeholder_values=builtin_placeholder_values,
+        )
         return cls._resolve_template_value_static(value_template, placeholder_values)
 
     @classmethod
-    def _build_placeholder_values(cls, template_context: dict[str, Any]) -> dict[str, Any]:
-        """构造占位符到实际值的映射表"""
-        placeholder_values = {
+    def build_builtin_placeholder_values(cls) -> dict[str, Any]:
+        """构造当前执行周期可复用的内置变量值"""
+        return {
             cls.SEED_PLACEHOLDER: cls._generate_random_seed(),
         }
+
+    @classmethod
+    def _build_placeholder_values(
+            cls,
+            template_context: dict[str, Any],
+            builtin_placeholder_values: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """构造占位符到实际值的映射表"""
+        placeholder_values = dict(builtin_placeholder_values or cls.build_builtin_placeholder_values())
         for key, value in template_context.items():
             placeholder_values[f"{{{key}}}"] = value
         return placeholder_values

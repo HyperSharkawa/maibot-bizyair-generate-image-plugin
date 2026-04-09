@@ -3,8 +3,10 @@ from typing import List, Tuple, Type, Union
 from src.common.logger import get_logger
 from src.plugin_system import BaseAction, BaseCommand, BaseEventHandler, BasePlugin, BaseTool, ConfigField, register_plugin
 from src.plugin_system.base.component_types import ActionInfo, CommandInfo, EventHandlerInfo, PythonDependency, ToolInfo
-from .clients import BizyAirOpenApiClient
+from src.plugin_system.base.config_types import ConfigLayout, ConfigTab
+from .components.dr_commands import DrListCommand, DrUseCommand
 from .components.generate_image_action import GenerateImageAction
+from .services import build_action_parameters
 
 logger = get_logger("bizyair_generate_image_plugin")
 
@@ -35,10 +37,18 @@ DEFAULT_CUSTOM_VARIABLES = [
     }
 ]
 
+DEFAULT_APP_PRESETS = [
+    {
+        "preset_name": "default",
+        "app_id": 50835,
+        "description": "默认 BizyAir App",
+    },
+]
+
 DEFAULT_OPENAPI_PARAMETER_MAPPINGS = [
-    {"field": "18:BizyAir_NanoBananaProOfficial.prompt", "value_type": "string", "value": "{english_prompt}", "send_if_empty": False},
-    {"field": "18:BizyAir_NanoBananaProOfficial.aspect_ratio", "value_type": "string", "value": "{aspect_ratio}", "send_if_empty": False},
-    {"field": "18:BizyAir_NanoBananaProOfficial.resolution", "value_type": "string", "value": "{resolution}", "send_if_empty": False},
+    {"preset_name": "default", "field": "18:BizyAir_NanoBananaProOfficial.prompt", "value_type": "string", "value": "{english_prompt}"},
+    {"preset_name": "default", "field": "18:BizyAir_NanoBananaProOfficial.aspect_ratio", "value_type": "string", "value": "{aspect_ratio}"},
+    {"preset_name": "default", "field": "18:BizyAir_NanoBananaProOfficial.resolution", "value_type": "string", "value": "{resolution}"},
 ]
 
 
@@ -57,8 +67,43 @@ class BizyAirGenerateImagePlugin(BasePlugin):
     config_section_descriptions = {
         "bizyair_client": "BizyAir 接口连接配置",
         "bizyair_generate_image_plugin": "BizyAir 文生图 Action 配置",
+        "custom_variables_config": "自定义变量配置",
         "variable_llm_config": "自定义变量 LLM 配置",
     }
+
+    config_layout = ConfigLayout(
+        type="tabs",
+        tabs=[
+            ConfigTab(
+                id="client",
+                title="连接配置",
+                sections=["bizyair_client"],
+                icon="plug",
+                order=1,
+            ),
+            ConfigTab(
+                id="generate_image",
+                title="生图动作",
+                sections=["bizyair_generate_image_plugin"],
+                icon="image",
+                order=2,
+            ),
+            ConfigTab(
+                id="custom_variables",
+                title="自定义变量",
+                sections=["custom_variables_config"],
+                icon="variable",
+                order=3,
+            ),
+            ConfigTab(
+                id="variable_llm",
+                title="变量 LLM",
+                sections=["variable_llm_config"],
+                icon="bot",
+                order=4,
+            ),
+        ],
+    )
 
     config_schema = {
         "bizyair_client": {
@@ -72,15 +117,48 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                 default="https://api.bizyair.cn/w/v1/webapp/task/openapi/create",
                 description="BizyAir OpenAPI 的 HTTP 地址。",
             ),
-            "openapi_web_app_id": ConfigField(
-                type=int,
-                default=50835,
-                description="BizyAir OpenAPI 的 web_app_id。",
+            "app_presets": ConfigField(
+                type=list,
+                item_type="object",
+                item_fields={
+                    "preset_name": {
+                        "type": "string",
+                        "label": "预设名称",
+                        "placeholder": "例如 flux_portrait，全局唯一，不可重复",
+                    },
+                    "app_id": {
+                        "type": "int",
+                        "label": "App ID",
+                        "placeholder": "例如 50835",
+                    },
+                    "description": {
+                        "type": "string",
+                        "label": "App 描述",
+                        "placeholder": "例如 默认人像生图应用，仅用于备注",
+                    },
+                },
+                default=DEFAULT_APP_PRESETS,
+                description="App 预设列表。每个预设对应一个 BizyAir App ID，preset_name 全局唯一；description 仅用于备注，不参与运行时逻辑。",
+            ),
+            "active_preset": ConfigField(
+                type=str,
+                default="default",
+                description="当前激活的 App 预设名称，必须与 app_presets 中某个 preset_name 完全一致。",
+            ),
+            "timeout": ConfigField(
+                type=float,
+                default=180.0,
+                description="调用 OpenAPI 和下载图片的超时时间（秒）。",
             ),
             "openapi_parameter_mappings": ConfigField(
                 type=list,
                 item_type="object",
                 item_fields={
+                    "preset_name": {
+                        "type": "string",
+                        "label": "关联预设",
+                        "placeholder": "例如 default 或 flux_portrait,anime（多个用英文逗号分隔，不可为空）",
+                    },
                     "field": {
                         "type": "string",
                         "label": "OpenAPI 参数名",
@@ -106,19 +184,15 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                 },
                 default=DEFAULT_OPENAPI_PARAMETER_MAPPINGS,
                 description=(
-                    "OpenAPI input_values 参数映射表。每一项必须包含 field、value_type、value。"
-                    " 支持引用 action_parameters 中定义的任意参数占位符，以及 {random_seed}。"
+                    "OpenAPI input_values 参数映射表。每一项必须包含 preset_name、field、value_type、value。"
+                    " preset_name 不可为空，可填多个预设名（英文逗号分隔），运行时只加载与 active_preset 匹配的条目。"
+                    " 支持引用 action_parameters、自定义变量以及内置变量占位符（当前包含 {random_seed}）。"
                     " value 会按 value_type 强制转换为 string、int、boolean 或反序列化为 json。"
                     " 当解析结果为空字符串、null、空数组或空对象时，默认跳过该参数；可通过 send_if_empty 控制是否仍然传参。"
                 ),
             ),
         },
         "bizyair_generate_image_plugin": {
-            "timeout": ConfigField(
-                type=float,
-                default=180.0,
-                description="调用 OpenAPI 和下载图片的超时时间（秒）。",
-            ),
             "send_text_before_image": ConfigField(
                 type=bool,
                 default=False,
@@ -163,6 +237,12 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                 default=DEFAULT_ACTION_PARAMETERS,
                 description="generate_image 动作允许决策传入的参数列表。",
             ),
+            "action_require": ConfigField(type=str,
+                                          input_type="textarea",
+                                          default="\n".join(GenerateImageAction.action_require),
+                                          description="图片生成 action 的决策提示词，每行一条。"),
+        },
+        "custom_variables_config": {
             "custom_variables": ConfigField(
                 type=list,
                 item_type="object",
@@ -181,7 +261,7 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                     "values": {
                         "type": "string",
                         "label": "候选值列表",
-                        "placeholder": '例如 ["二次元插画", "电影感", "高细节"] ，支持引用 action_inputs 中的 {参数名}',
+                        "placeholder": '例如 ["二次元插画", "seed={random_seed}", "高细节"] ，支持引用 action_inputs 中的 {参数名} 和内置变量',
                     },
                     "probability": {
                         "type": "float",
@@ -190,12 +270,8 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                     },
                 },
                 default=DEFAULT_CUSTOM_VARIABLES,
-                description="自定义变量列表。支持 literal 和 llm 两种模式。两种模式都会先从 values 中随机抽一条，如果是 llm 模式则会调用 llm 生成变量值。支持引用 action_inputs 中的 {参数名}，不允许变量之间互相引用。",
+                description="自定义变量列表。支持 literal 和 llm 两种模式。两种模式都会先从 values 中随机抽一条，如果是 llm 模式则会调用 llm 生成变量值。支持引用 action_inputs 中的 {参数名} 和内置变量占位符（当前包含 {random_seed}），不允许变量之间互相引用。",
             ),
-            "action_require": ConfigField(type=str,
-                                          input_type="textarea",
-                                          default="\n".join(GenerateImageAction.action_require),
-                                          description="图片生成 action 的决策提示词，每行一条。"),
         },
         "variable_llm_config": {
             "llm_group": ConfigField(
@@ -255,8 +331,13 @@ class BizyAirGenerateImagePlugin(BasePlugin):
         config = self.config.get("bizyair_generate_image_plugin", {})
         if raw_action_require := config.get("action_require"):
             GenerateImageAction.action_require = [line.strip() for line in raw_action_require.split("\n") if line.strip()]
-        GenerateImageAction.set_action_parameters(
+        action_parameters, required_action_parameters = build_action_parameters(
             config.get("action_parameters", DEFAULT_ACTION_PARAMETERS)
         )
+        GenerateImageAction.action_parameters = action_parameters
+        GenerateImageAction.required_action_parameters = required_action_parameters
+        GenerateImageAction.active_preset = str(self.config.get("bizyair_client", {}).get("active_preset", "default")).strip()
         components.append((GenerateImageAction.get_action_info(), GenerateImageAction))
+        components.append((DrListCommand.get_command_info(), DrListCommand))
+        components.append((DrUseCommand.get_command_info(), DrUseCommand))
         return components
