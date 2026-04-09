@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -70,7 +71,10 @@ class BuiltinVariableProvider:
 
         :return: frozenset[str]，默认注册的内置变量名称集合
         """
-        return frozenset({"random_seed"} | {f"recent_chat_context_{limit}" for limit in cls.DEFAULT_RECENT_CHAT_CONTEXT_LIMITS})
+        return frozenset(
+            {"random_seed", "current_datetime"}
+            | {f"recent_chat_context_{limit}" for limit in cls.DEFAULT_RECENT_CHAT_CONTEXT_LIMITS}
+        )
 
     def build_placeholder_values(self, required_names: set[str] | None = None) -> dict[str, Any]:
         """
@@ -115,6 +119,7 @@ class BuiltinVariableProvider:
         :return: None，无返回值
         """
         self.register("random_seed", self._build_random_seed)
+        self.register("current_datetime", self._build_current_datetime)
         for limit in self.DEFAULT_RECENT_CHAT_CONTEXT_LIMITS:
             self.register(
                 f"recent_chat_context_{limit}",
@@ -128,6 +133,14 @@ class BuiltinVariableProvider:
         :return: int，位于预设区间内的随机整数种子
         """
         return random.randint(self.DEFAULT_RANDOM_SEED_MIN, self.DEFAULT_RANDOM_SEED_MAX)
+
+    def _build_current_datetime(self) -> str:
+        """
+        生成当前日期时间内置变量的值
+
+        :return: str，当前本地日期时间，格式为 YYYY-MM-DD HH:MM:SS
+        """
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def _build_recent_chat_context(self, limit: int) -> str:
         """

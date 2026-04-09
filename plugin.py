@@ -39,6 +39,7 @@ DEFAULT_CUSTOM_VARIABLES = [
 
 BUILTIN_VARIABLE_DESCRIPTIONS = [
     "{random_seed}：一个随机的 32 位整数",
+    "{current_datetime}：当前本地日期时间，格式为 YYYY-MM-DD HH:MM:SS",
     "{recent_chat_context_10}：当前聊天最近 10 条聊天记录的可读文本。",
     "{recent_chat_context_30}：当前聊天最近 30 条聊天记录的可读文本",
     "{recent_chat_context_50}：当前聊天最近 50 条聊天记录的可读文本",
