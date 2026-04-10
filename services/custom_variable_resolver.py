@@ -225,7 +225,7 @@ class CustomVariableResolver:
             try:
                 parsed_value = json.loads(text)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"{field_name} 不是合法的 JSON 列表字符串: {exc}") from exc
+                raise ValueError(f"{field_name} 不是合法的 JSON 列表字符串: {exc} parsed_value: {text}") from exc
 
             if not isinstance(parsed_value, list):
                 raise ValueError(f"{field_name} 必须是 JSON 列表")

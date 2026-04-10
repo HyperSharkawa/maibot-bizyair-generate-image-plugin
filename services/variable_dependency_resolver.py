@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Literal
 from src.common.logger import get_logger
 from .builtin_variable_provider import BuiltinVariableProvider
 from .custom_variable_resolver import CustomVariableDefinition
+from .log_utils import short_repr
 from .template_placeholder_utils import TemplatePlaceholderUtils
 
 logger = get_logger("bizyair_generate_image_plugin")
@@ -91,6 +92,11 @@ class VariableDependencyResolver:
                 node_type="custom_variable",
                 dependencies=frozenset(deps),
             )
+        if self._nodes:
+            logger.info(
+                f"[依赖解析] 构建依赖图完成: nodes={list(self._nodes.keys())}, "
+                f"dependencies={{name: sorted(node.dependencies) for name, node in self._nodes.items()}}"
+            )
 
     def _scan_dependencies(self, template_value: Any, known_node_names: frozenset[str] | set[str]) -> set[str]:
         """
@@ -146,6 +152,8 @@ class VariableDependencyResolver:
             cycle_nodes = {name for name, degree in in_degree.items() if degree > 0}
             cycle_path = self._find_cycle_path(cycle_nodes)
             raise ValueError(f"检测到循环引用: {' → '.join(cycle_path)}")
+
+        logger.info(f"[依赖解析] 拓扑排序结果: {sorted_order}")
 
         return sorted_order
 
@@ -210,18 +218,29 @@ class VariableDependencyResolver:
 
         for name in sorted_order:
             node = self._nodes[name]
+            logger.debug(
+                f"[依赖解析] 开始解析节点: name={name!r}, node_type={node.node_type}, "
+                f"dependencies={sorted(node.dependencies)}, resolved_context_keys={sorted(resolved_context.keys())}"
+            )
 
             if node.node_type == "action_input":
                 raw_value = self._action_inputs.get(name, "")
+                logger.debug(
+                    f"[依赖解析] action_input 解析前: name={name!r}, raw_value={short_repr(raw_value)}"
+                )
                 resolved_value = self._substitute_placeholders_in_value(
                     raw_value, resolved_context, builtin_placeholder_values
                 )
                 resolved_action_inputs[name] = resolved_value
                 resolved_context[name] = resolved_value
-                logger.debug(f"[依赖解析] action_input {name!r} 解析完成: {resolved_value!r}")
+                logger.info(f"[依赖解析] action_input 解析完成: name={name!r}, value={short_repr(resolved_value)}")
 
             elif node.node_type == "custom_variable":
                 definition = self._custom_variable_definitions[name]
+                logger.debug(
+                    f"[依赖解析] custom_variable 解析前: name={name!r}, mode={definition.mode!r}, "
+                    f"candidates={short_repr(definition.values)}"
+                )
                 resolved_value = await self._resolve_custom_variable(
                     definition=definition,
                     resolved_context=resolved_context,
@@ -231,7 +250,7 @@ class VariableDependencyResolver:
                 )
                 resolved_custom_variables[name] = resolved_value
                 resolved_context[name] = resolved_value
-                logger.debug(f"[依赖解析] custom_variable {name!r} 解析完成: {resolved_value!r}")
+                logger.info(f"[依赖解析] custom_variable 解析完成: name={name!r}, value={short_repr(resolved_value)}")
 
         return resolved_action_inputs, resolved_custom_variables
 
@@ -301,6 +320,10 @@ class VariableDependencyResolver:
             placeholder_values[f"{{{key}}}"] = val
 
         selected_template = random.choice(definition.values)
+        logger.debug(
+            f"[依赖解析] 选中自定义变量模板: name={definition.key!r}, mode={definition.mode!r}, "
+            f"selected_template={short_repr(selected_template)}, placeholder_keys={sorted(placeholder_values.keys())}"
+        )
         selected_value = self._resolve_template_recursive(selected_template, placeholder_values)
         selected_value = str(selected_value).strip()
 

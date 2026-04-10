@@ -15,6 +15,7 @@ from ..clients import (
 from ..services import permission_manager
 from ..services.builtin_variable_provider import BuiltinVariableProvider
 from ..services.custom_variable_resolver import CustomVariableResolver
+from ..services.log_utils import short_repr
 from ..services.openapi_input_value_builder import BizyAirOpenApiInputValueBuilder
 from ..services.variable_dependency_resolver import VariableDependencyResolver
 
@@ -57,22 +58,34 @@ class GenerateImageAction(BaseAction):
     async def execute(self) -> Tuple[bool, str]:
         """执行生图流程并在失败时返回完整错误信息"""
         try:
+            failure_stage = "permission_check"
             user_id = str(self.user_id)
             has_permission, deny_reason = permission_manager.check_action_permission(user_id)
             if not has_permission:
                 return False, deny_reason or "当前用户没有使用该 action 的权限"
 
+            failure_stage = "collect_action_inputs"
             action_inputs = self._collect_action_inputs()
             active_preset = str(self.active_preset).strip()
+
+            failure_stage = "resolve_app_id"
             app_id = self._resolve_active_app_id(active_preset)
+
+            failure_stage = "filter_parameter_bindings"
             all_parameter_bindings_config = self.get_config("bizyair_client.openapi_parameter_mappings", [])
             parameter_bindings_config = self._filter_parameter_bindings_by_preset(
                 all_parameter_bindings_config, active_preset
+            )
+            logger.info(
+                f"{self.log_prefix} 生图配置摘要: active_preset={active_preset!r}, app_id={app_id}, "
+                f"action_inputs={short_repr(action_inputs)}, custom_variable_keys={list(self.get_config('custom_variables_config.custom_variables', [])) and [str(item.get('key', '')).strip() for item in self.get_config('custom_variables_config.custom_variables', []) if isinstance(item, dict) and str(item.get('key', '')).strip()]}, "
+                f"binding_fields={[str(item.get('field', '')).strip() for item in parameter_bindings_config if isinstance(item, dict)]}"
             )
             builtin_variable_provider = BuiltinVariableProvider(
                 chat_id=self.chat_id,
                 filter_mai=False,
             )
+            failure_stage = "build_custom_variable_resolver"
             custom_variable_resolver = CustomVariableResolver(
                 raw_variables=self.get_config("custom_variables_config.custom_variables", []),
                 action_inputs=action_inputs,
@@ -80,6 +93,7 @@ class GenerateImageAction(BaseAction):
                 llm_value_factory=self._generate_variable_with_llm,
                 builtin_variable_provider=builtin_variable_provider,
             )
+            failure_stage = "collect_required_variables"
             direct_variable_keys = custom_variable_resolver.collect_required_variable_keys(parameter_bindings_config)
             builtin_names = BuiltinVariableProvider.get_default_variable_names()
             required_variable_keys = VariableDependencyResolver.compute_required_variable_keys(
@@ -89,10 +103,22 @@ class GenerateImageAction(BaseAction):
                 action_parameter_names=set(self.action_parameters.keys()),
                 builtin_names=builtin_names,
             )
+            logger.debug(
+                f"{self.log_prefix} 变量依赖摘要: direct_variable_keys={sorted(direct_variable_keys)}, "
+                f"required_variable_keys={sorted(required_variable_keys)}"
+            )
+
+            failure_stage = "build_builtin_placeholders"
             required_builtin_names = BizyAirOpenApiInputValueBuilder.collect_builtin_placeholder_names_from_bindings(
                 parameter_bindings_config
             )
             builtin_placeholder_values = builtin_variable_provider.build_placeholder_values(required_builtin_names)
+            logger.debug(
+                f"{self.log_prefix} 内置变量摘要: required_builtin_names={sorted(required_builtin_names)}, "
+                f"builtin_placeholder_values={short_repr(builtin_placeholder_values)}"
+            )
+
+            failure_stage = "build_dependency_resolver"
             dependency_resolver = VariableDependencyResolver(
                 action_inputs=action_inputs,
                 custom_variable_definitions=custom_variable_resolver.variable_definitions,
@@ -100,13 +126,18 @@ class GenerateImageAction(BaseAction):
                 builtin_names=builtin_names,
                 required_custom_variable_keys=required_variable_keys,
             )
+            failure_stage = "resolve_variables"
             resolved_action_inputs, custom_variable_values = await dependency_resolver.resolve_all(
                 builtin_placeholder_values=builtin_placeholder_values,
                 llm_value_factory=self._generate_variable_with_llm,
                 builtin_variable_provider=builtin_variable_provider,
             )
             template_context = {**resolved_action_inputs, **custom_variable_values}
+
+            failure_stage = "parse_parameter_bindings"
             parameter_bindings = BizyAirOpenApiInputValueBuilder.parse_parameter_bindings(parameter_bindings_config)
+
+            failure_stage = "build_input_values"
             input_values = BizyAirOpenApiInputValueBuilder.build_input_values(
                 parameter_bindings=parameter_bindings,
                 template_context=template_context,
@@ -116,15 +147,22 @@ class GenerateImageAction(BaseAction):
                 builtin_placeholder_values=builtin_placeholder_values,
             )
 
+            failure_stage = "read_token"
             token = str(self.get_config("bizyair_client.bearer_token", "")).strip()
             if not token:
                 raise ValueError("插件未配置 bearer_token")
 
+            failure_stage = "read_timeout"
             timeout = float(str(self.get_config("bizyair_client.timeout", 180.0)).strip())
 
             logger.info(
-                f"{self.log_prefix} 开始生成图片: provider=openapi, active_preset={active_preset!r}, app_id={app_id}, action_inputs={resolved_action_inputs!r}, custom_variable_values={custom_variable_values!r}, timeout={timeout}")
+                f"{self.log_prefix} 图片生成摘要: provider=openapi, active_preset={active_preset!r}, "
+                f"app_id={app_id}, "
+                f"action_inputs={resolved_action_inputs!r}, "
+                f"custom_variable_values={custom_variable_values!r}, "
+                f"timeout={timeout}")
 
+            failure_stage = "generate_image_bytes"
             image_bytes = await self._generate_image_bytes(
                 token=token,
                 app_id=app_id,
@@ -146,6 +184,7 @@ class GenerateImageAction(BaseAction):
                     await self.send_text(prefix_text, storage_message=True)
                     logger.info(f"{self.log_prefix} 已发送图片前置文本")
 
+            failure_stage = "send_image"
             send_success = await self.send_image(image_base64, storage_message=True)
             if not send_success:
                 await self.store_action_info(action_build_into_prompt=True, action_prompt_display=self._build_action_display(action_inputs), action_done=False, )
@@ -159,6 +198,7 @@ class GenerateImageAction(BaseAction):
             return True, f"图片生成并发送完成，使用的参数: {template_context}"
         except Exception as exc:
             stack_trace = traceback.format_exc()
+            logger.info(f"{self.log_prefix} 生图流程失败阶段: {locals().get('failure_stage', 'unknown')}")
             logger.error(f"{self.log_prefix} generate_image 执行失败: {exc}\n{stack_trace}")
             raw_reply = f"[图片生成失败] {type(exc).__name__}: {exc}\n调用栈:\n{stack_trace}"
             await self._send_failure_reply(raw_reply)
@@ -246,14 +286,21 @@ class GenerateImageAction(BaseAction):
         app_presets = self.get_config("bizyair_client.app_presets", [])
         if not isinstance(app_presets, list) or not app_presets:
             raise ValueError("app_presets 未配置或为空列表")
+        available_presets = []
         for index, preset in enumerate(app_presets):
             if not isinstance(preset, dict):
                 raise ValueError(f"app_presets[{index}] 必须是对象")
             name = str(preset.get("preset_name", "")).strip()
+            if name:
+                available_presets.append(name)
             if name == active_preset:
                 raw_app_id = preset.get("app_id")
                 if raw_app_id is None:
                     raise ValueError(f"app_presets 中 preset_name={active_preset!r} 的 app_id 为空")
+                logger.info(
+                    f"{self.log_prefix} 匹配到 app preset: active_preset={active_preset!r}, "
+                    f"app_id={raw_app_id}, available_presets={available_presets}"
+                )
                 return int(raw_app_id)
         raise ValueError(f"app_presets 中找不到 preset_name={active_preset!r}，请检查 active_preset 配置")
 
@@ -273,8 +320,17 @@ class GenerateImageAction(BaseAction):
             if not raw_preset_name or not str(raw_preset_name).strip():
                 raise ValueError(f"openapi_parameter_mappings[{index}].preset_name 不能为空")
             preset_names = {p.strip() for p in str(raw_preset_name).split(",") if p.strip()}
+            field_name = str(item.get("field", "")).strip() or f"index={index}"
+            matched = active_preset in preset_names
+            logger.debug(
+                f"[参数映射过滤] field={field_name!r}, preset_names={sorted(preset_names)}, "
+                f"active_preset={active_preset!r}, matched={matched}"
+            )
             if active_preset in preset_names:
                 result.append(item)
+        logger.info(
+            f"[参数映射过滤] active_preset={active_preset!r}, total={len(all_bindings)}, matched={len(result)}"
+        )
         return result
 
     async def _generate_image_bytes(

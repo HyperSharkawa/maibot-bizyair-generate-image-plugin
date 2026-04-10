@@ -105,7 +105,17 @@ class TestBuildInputValues:
 
     def test_undefined_variable_raises(self):
         bindings = [BizyAirOpenApiParameterBinding(field="n.x", value_template="{unknown}", value_type="string")]
-        with pytest.raises(ValueError, match="未定义的变量"):
+        with pytest.raises(ValueError, match="unknown"):
+            self._build(bindings, {"prompt": "cat"})
+
+    def test_int_error_contains_field_and_value(self):
+        bindings = [BizyAirOpenApiParameterBinding(field="n.seed", value_template="abc", value_type="int")]
+        with pytest.raises(ValueError, match="n.seed"):
+            self._build(bindings, {"prompt": "cat"})
+
+    def test_boolean_error_contains_field_and_value(self):
+        bindings = [BizyAirOpenApiParameterBinding(field="n.flag", value_template="not-bool", value_type="boolean")]
+        with pytest.raises(ValueError, match="not-bool"):
             self._build(bindings, {"prompt": "cat"})
 
 

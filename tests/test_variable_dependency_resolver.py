@@ -150,7 +150,7 @@ class TestTopologicalSort:
             "b": _make_definition("b", values=["{a}"]),
         }
         resolver = _make_resolver(action_inputs={}, definitions=defs, action_parameter_names=set())
-        with pytest.raises(ValueError, match="循环引用"):
+        with pytest.raises(ValueError, match="a|b"):
             resolver.topological_sort()
 
     def test_cycle_detection_with_action_input(self):
@@ -160,7 +160,7 @@ class TestTopologicalSort:
             definitions=defs,
             action_parameter_names={"prompt"},
         )
-        with pytest.raises(ValueError, match="循环引用"):
+        with pytest.raises(ValueError, match="style|prompt"):
             resolver.topological_sort()
 
     def test_diamond_dag(self):

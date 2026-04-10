@@ -68,7 +68,7 @@ class BizyAirOpenApiClient(BizyAirBaseClient):
             suppress_preview_output=suppress_preview_output,
         )
 
-        logger.info(f"准备调用 OpenAPI 。请求体:{payload}")
+        logger.info(f"[OpenAPI 客户端] 调用请求体:{payload}")
 
         headers = self._build_headers()
         headers["Content-Type"] = "application/json"

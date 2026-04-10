@@ -4,10 +4,13 @@ import json
 from typing import Any
 
 from ..clients import BizyAirOpenApiParameterBinding
+from src.common.logger import get_logger
 from .builtin_variable_provider import BuiltinVariableProvider
+from .log_utils import short_repr
 from .template_placeholder_utils import TemplatePlaceholderUtils
 
 VALID_VALUE_TYPES = {"string", "int", "boolean", "json"}
+logger = get_logger("bizyair_generate_image_plugin")
 
 class BizyAirOpenApiInputValueBuilder:
     """负责将 action/context/config 组装为 OpenAPI input_values"""
@@ -50,6 +53,10 @@ class BizyAirOpenApiInputValueBuilder:
                 value_type=value_type,
                 send_if_empty=send_if_empty,
             ))
+            logger.debug(
+                f"[参数构造] 解析参数映射: index={index}, field={field!r}, value_type={value_type!r}, "
+                f"send_if_empty={send_if_empty}, value_template={short_repr(value_template)}"
+            )
         return bindings
 
     @classmethod
@@ -82,6 +89,10 @@ class BizyAirOpenApiInputValueBuilder:
         )
         input_values: dict[str, Any] = {}
         for index, binding in enumerate(parameter_bindings):
+            logger.debug(
+                f"[参数构造] 开始处理参数: index={index}, field={binding.field!r}, "
+                f"value_type={binding.value_type!r}, value_template={short_repr(binding.value_template)}"
+            )
             resolved_value = cls._resolve_template_value(
                 binding.value_template,
                 placeholder_values,
@@ -89,14 +100,27 @@ class BizyAirOpenApiInputValueBuilder:
                 action_parameter_names=action_parameter_names,
                 required_action_parameters=required_action_parameters,
             )
+            logger.debug(
+                f"[参数构造] 模板替换完成: index={index}, field={binding.field!r}, "
+                f"resolved_value={short_repr(resolved_value)}"
+            )
             if not binding.send_if_empty and cls._is_empty_mapping_value(resolved_value):
+                logger.info(
+                    f"[参数构造] 参数被跳过: index={index}, field={binding.field!r}, "
+                    f"reason='resolved value empty and send_if_empty disabled', value={short_repr(resolved_value)}"
+                )
                 continue
             # 占位符替换完成后，按 value_type 做类型转换
             resolved_value = cls._coerce_mapping_value(
                 resolved_value, binding.value_type,
                 f"openapi_parameter_mappings[{index}].value",
+                binding_field=binding.field,
+                original_template=binding.value_template,
             )
             input_values[binding.field] = resolved_value
+            logger.debug(
+                f"[参数构造] 参数写入完成: index={index}, field={binding.field!r}, value={short_repr(resolved_value)}"
+            )
         return input_values
 
     @classmethod
@@ -278,7 +302,9 @@ class BizyAirOpenApiInputValueBuilder:
             ):
                 result = result.replace(f"{{{placeholder_name}}}", "")
                 continue
-            raise ValueError(f"模板中引用了未定义的变量: {placeholder_name}")
+            raise ValueError(
+                f"模板中引用了未定义的变量: {placeholder_name}, resolved_text={resolved_text!r}"
+            )
         return result
 
     @classmethod
@@ -298,7 +324,14 @@ class BizyAirOpenApiInputValueBuilder:
         return False
 
     @classmethod
-    def _coerce_mapping_value(cls, value: Any, value_type: str, field_name: str) -> Any:
+    def _coerce_mapping_value(
+            cls,
+            value: Any,
+            value_type: str,
+            field_name: str,
+            binding_field: str | None = None,
+            original_template: Any = None,
+    ) -> Any:
         """
         按声明的 value_type 强制转换映射值
 
@@ -318,7 +351,9 @@ class BizyAirOpenApiInputValueBuilder:
             try:
                 return int(raw_text)
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"{field_name} 不是合法整数: {value}") from exc
+                raise ValueError(
+                    f"{field_name} 不是合法整数: value={value!r}, field={binding_field!r}, template={original_template!r}"
+                ) from exc
 
         if value_type == "boolean":
             normalized = raw_text.lower()
@@ -326,15 +361,21 @@ class BizyAirOpenApiInputValueBuilder:
                 return True
             if normalized in {"false", "0", "no", "off"}:
                 return False
-            raise ValueError(f"{field_name} 不是合法布尔值: {value}")
+            raise ValueError(
+                f"{field_name} 不是合法布尔值: value={value!r}, field={binding_field!r}, template={original_template!r}"
+            )
 
         if value_type == "json":
             if not raw_text:
-                raise ValueError(f"{field_name} 不能为空")
+                raise ValueError(
+                    f"{field_name} 不能为空: field={binding_field!r}, template={original_template!r}"
+                )
             try:
                 return json.loads(raw_text)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"{field_name} 不是合法 JSON: {value}") from exc
+                raise ValueError(
+                    f"{field_name} 不是合法 JSON: value={value!r}, field={binding_field!r}, template={original_template!r}"
+                ) from exc
 
         raise ValueError(f"{field_name} 的类型不支持: {value_type}")
 
