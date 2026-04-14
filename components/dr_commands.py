@@ -1,6 +1,7 @@
 """
 /dr list  —— 列出所有可用的 App 预设
 /dr use <preset_name>  —— 切换当前激活的 App 预设
+/dr switch <on|off>  —— 动态开关生图功能
 """
 
 import os
@@ -127,3 +128,47 @@ class DrUseCommand(BaseCommand):
             f'✅ 已切换画图预设：{old_preset} → {preset_name}\n{persist_msg}'
         )
         return True, f"切换预设 {old_preset} -> {preset_name}", 1
+
+
+class DrSwitchCommand(BaseCommand):
+    """动态切换生图功能总开关（/dr switch <on|off>）"""
+
+    command_name = "dr_switch"
+    command_description = "动态开关图片生成功能"
+    command_pattern = r"^/dr\s+switch\s+(?P<enabled>on|off)$"
+
+    async def execute(self) -> Tuple[bool, Optional[str], int]:
+        user_id = self.message.message_info.user_info.user_id
+        has_permission, deny_reason = permission_manager.check_command_permission(str(user_id))
+        if not has_permission:
+            return True, deny_reason, 1
+
+        enabled_text: str = self.matched_groups.get("enabled", "").strip().lower()
+        enabled = enabled_text == "on"
+        old_enabled = bool(GenerateImageAction.action_enabled)
+
+        if old_enabled == enabled:
+            status_text = "开启" if enabled else "关闭"
+            await self.send_text(f"当前图片生成功能已经是{status_text}状态，无需切换。")
+            return True, "生图功能开关未变更", 1
+
+        GenerateImageAction.action_enabled = enabled
+
+        try:
+            from src.common.toml_utils import save_toml_with_format
+            save_toml_with_format(
+                {"bizyair_generate_image_plugin": {"action_enabled": enabled}},
+                _CONFIG_PATH,
+                preserve_comments=True,
+            )
+            persist_msg = "已保存到配置文件。"
+        except Exception as e:
+            logger.warning(f"[DrSwitchCommand] 保存 action_enabled 失败: {e}")
+            persist_msg = "(注意: 保存到配置文件时失败，重启后将恢复原状态)"
+
+        old_status_text = "开启" if old_enabled else "关闭"
+        new_status_text = "开启" if enabled else "关闭"
+        await self.send_text(
+            f"✅ 已切换图片生成功能：{old_status_text} → {new_status_text}\n{persist_msg}"
+        )
+        return True, f"切换生图功能 {old_status_text} -> {new_status_text}", 1

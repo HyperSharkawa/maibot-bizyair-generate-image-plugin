@@ -4,7 +4,7 @@ from src.common.logger import get_logger
 from src.plugin_system import BaseAction, BaseCommand, BaseEventHandler, BasePlugin, BaseTool, ConfigField, register_plugin
 from src.plugin_system.base.component_types import ActionInfo, CommandInfo, EventHandlerInfo, PythonDependency, ToolInfo
 from src.plugin_system.base.config_types import ConfigLayout, ConfigTab
-from .components.dr_commands import DrListCommand, DrUseCommand
+from .components.dr_commands import DrListCommand, DrSwitchCommand, DrUseCommand
 from .components.generate_image_action import GenerateImageAction
 from .services import build_action_parameters, permission_manager
 
@@ -331,6 +331,11 @@ class BizyAirGenerateImagePlugin(BasePlugin):
             ),
         },
         "bizyair_generate_image_plugin": {
+            "action_enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="生图功能总开关。关闭后将拒绝所有生图 action 请求，并向用户发送未开启提示。",
+            ),
             "active_preset": ConfigField(
                 type=str,
                 default="default",
@@ -582,6 +587,7 @@ class BizyAirGenerateImagePlugin(BasePlugin):
         GenerateImageAction.required_action_parameters = {
             name for name, definition in action_parameters.items() if definition.required
         }
+        GenerateImageAction.action_enabled = bool(config.get("action_enabled", True))
         GenerateImageAction.active_preset = str(self.config.get("bizyair_generate_image_plugin", {}).get("active_preset", "default")).strip()
         permission_manager.configure(
             global_blacklist=permission_config.get("global_blacklist", DEFAULT_PERMISSION_USER_LIST),
@@ -593,4 +599,5 @@ class BizyAirGenerateImagePlugin(BasePlugin):
         components.append((GenerateImageAction.get_action_info(), GenerateImageAction))
         components.append((DrListCommand.get_command_info(), DrListCommand))
         components.append((DrUseCommand.get_command_info(), DrUseCommand))
+        components.append((DrSwitchCommand.get_command_info(), DrSwitchCommand))
         return components

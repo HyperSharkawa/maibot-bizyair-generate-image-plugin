@@ -37,6 +37,7 @@ class GenerateImageAction(BaseAction):
     parallel_action = True
     associated_types = ["image", "text"]
     active_preset = "default"
+    action_enabled = True
 
     action_parameters: dict[str, ActionParameterDefinition] = {
         "prompt": ActionParameterDefinition(
@@ -75,6 +76,10 @@ class GenerateImageAction(BaseAction):
     async def execute(self) -> Tuple[bool, str]:
         """执行生图流程并在失败时返回完整错误信息"""
         try:
+            if not self.action_enabled:
+                await self.send_text("当前图片生成功能未开启", storage_message=True)
+                return False, "当前图片生成功能未开启"
+
             failure_stage = "permission_check"
             user_id = str(self.user_id)
             has_permission, deny_reason = permission_manager.check_action_permission(user_id)
