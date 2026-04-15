@@ -4,7 +4,8 @@ import base64
 import re
 from typing import Any
 
-import httpx
+import openai
+from openai import AsyncOpenAI
 
 from src.common.logger import get_logger
 from .base import BizyAirBaseClient, BizyAirImageResult
@@ -34,6 +35,12 @@ class NaiChatClient(BizyAirBaseClient):
         super().__init__(bearer_token=bearer_token, timeout=timeout)
         self.base_url = self._validate_url(base_url, "base_url")
         self.model = self._require_non_empty_text(model, "model")
+        self.client = AsyncOpenAI(
+            api_key=self.bearer_token,
+            base_url=self.base_url.rstrip("/"),
+            timeout=self.timeout,
+            max_retries=2,
+        )
 
     def _build_request_payload(self, content_json: str) -> dict[str, Any]:
         """构造 Chat Completions 请求体"""
@@ -63,36 +70,30 @@ class NaiChatClient(BizyAirBaseClient):
     async def create_chat_completion(self, content_json: str) -> str:
         """调用 Chat Completions 并返回 assistant content"""
         payload = self._build_request_payload(content_json)
-        headers = self._build_headers()
-        headers["Content-Type"] = "application/json"
-        endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
 
         logger.info(f"[NAI Chat 客户端] 调用请求体: {payload}")
 
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers) as client:
-            response = await client.post(endpoint, json=payload)
-            response.raise_for_status()
-            data = response.json()
-        return self._parse_markdown_content(data)
+        try:
+            response = await self.client.chat.completions.create(**payload)
+        except openai.APIError as exc:
+            raise NaiChatError(f"NAI Chat 调用失败: {exc}") from exc
+        return self._parse_markdown_content(response)
 
-    def _parse_markdown_content(self, data: dict[str, Any]) -> str:
+    def _parse_markdown_content(self, data: Any) -> str:
         """解析 chat completion 返回中的 assistant content"""
-        if not isinstance(data, dict):
-            raise NaiChatProtocolError(f"返回结果不是 JSON object: {type(data)}")
-
-        choices = data.get("choices")
+        choices = getattr(data, "choices", None)
         if not isinstance(choices, list) or not choices:
             raise NaiChatProtocolError(f"choices 不存在或为空: {choices}")
 
         first_choice = choices[0]
-        if not isinstance(first_choice, dict):
+        if first_choice is None:
             raise NaiChatProtocolError(f"choices[0] 不是 object: {first_choice}")
 
-        message = first_choice.get("message")
-        if not isinstance(message, dict):
+        message = getattr(first_choice, "message", None)
+        if message is None:
             raise NaiChatProtocolError(f"choices[0].message 不是 object: {message}")
 
-        content = message.get("content")
+        content = getattr(message, "content", None)
         text = "" if content is None else str(content).strip()
         if not text:
             raise NaiChatProtocolError("choices[0].message.content 为空")
