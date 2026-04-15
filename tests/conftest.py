@@ -87,7 +87,30 @@ def _setup_plugin_package() -> None:
     sys.modules["services"] = services_mod
     sys.modules["clients"] = clients_mod
 
-    # 同步子模块别名
+    # 显式导入所有需要在测试中使用的子模块，确保相对 import 在 _bizyair_plugin 包下正确解析
+    _submodules_to_alias = [
+        f"{_PKG}.services.action_parameter_utils",
+        f"{_PKG}.services.builtin_variable_provider",
+        f"{_PKG}.services.custom_variable_registry",
+        f"{_PKG}.services.log_utils",
+        f"{_PKG}.services.nai_chat_input_value_builder",
+        f"{_PKG}.services.openapi_input_value_builder",
+        f"{_PKG}.services.permission_manager",
+        f"{_PKG}.services.preset_resolution",
+        f"{_PKG}.services.template_placeholder_utils",
+        f"{_PKG}.services.variable_dependency_resolver",
+        f"{_PKG}.clients.base",
+        f"{_PKG}.clients.nai_chat_client",
+        f"{_PKG}.clients.openapi_client",
+        f"{_PKG}.clients.openapi_models",
+    ]
+    for fqn in _submodules_to_alias:
+        try:
+            importlib.import_module(fqn)
+        except ImportError:
+            pass
+
+    # 同步所有已加载的子模块别名
     for key, mod in list(sys.modules.items()):
         if key.startswith(f"{_PKG}.services."):
             alias = key[len(f"{_PKG}."):]
