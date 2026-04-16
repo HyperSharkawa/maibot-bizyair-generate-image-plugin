@@ -57,6 +57,7 @@ DEFAULT_CUSTOM_VARIABLES = [
 BUILTIN_VARIABLE_DESCRIPTIONS = [
     "{random_seed}：一个随机的 32 位整数",
     "{current_datetime}：当前本地日期时间，格式为 YYYY-MM-DD HH:MM:SS",
+    "{quoted_image_base64}：触发消息中（优先引用消息）的第一张图片的 base64 字符串，无图片时为空字符串",
     "{recent_chat_context_10}：当前聊天最近 10 条聊天记录的可读文本。",
     "{recent_chat_context_30}：当前聊天最近 30 条聊天记录的可读文本",
     "{recent_chat_context_50}：当前聊天最近 50 条聊天记录的可读文本",
@@ -231,8 +232,13 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                         "placeholder": '可填字符串、数字、布尔值、对象、数组，例如 "{prompt}"、"{random_seed}" 或 {"meta": ["{prompt}"]}',
                     },
                     "send_if_empty": {
-                        "type": "bool",
+                        "type": "boolean",
                         "label": "值为空时仍传参",
+                        "default": False,
+                    },
+                    "upload": {
+                        "type": "boolean",
+                        "label": "上传至 BizyAir OSS",
                         "default": False,
                     },
                 },
@@ -243,6 +249,7 @@ class BizyAirGenerateImagePlugin(BasePlugin):
                     " 支持引用 action_parameters、自定义变量以及内置变量占位符。"
                     " value 会按 value_type 强制转换为 string、int、boolean 或反序列化为 json。"
                     " 当解析结果为空字符串、null、空数组或空对象时，默认跳过该参数；可通过 send_if_empty 控制是否仍然传参。"
+                    " 当 upload=true 时，解析后的值（本地文件路径、base64 字符串）会先上传到 BizyAir OSS 并替换为 URL，再进行类型转换；已有 URL 会直接透传。"
                     f" 当前内置变量包括：{' '.join(BUILTIN_VARIABLE_DESCRIPTIONS)}"
                 ),
             ),

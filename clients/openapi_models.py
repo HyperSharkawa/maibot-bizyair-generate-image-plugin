@@ -16,10 +16,13 @@ class BizyAirOpenApiProtocolError(BizyAirOpenApiError):
 
 @dataclass(frozen=True)
 class BizyAirOpenApiParameterBinding:
+    """OpenAPI 参数映射定义对象"""
+
     field: str
     value_template: Any
     value_type: str = "string"
     send_if_empty: bool = False
+    upload: bool = False
 
 
 @dataclass(frozen=True)

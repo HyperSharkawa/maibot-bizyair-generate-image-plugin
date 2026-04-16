@@ -16,7 +16,7 @@ class BizyAirImageResult:
 
     async def download_bytes(self, timeout: float = 180.0) -> bytes:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(self.image_url)
+            response = await client.get(self.image_url,timeout=timeout)
             response.raise_for_status()
             return response.content
 

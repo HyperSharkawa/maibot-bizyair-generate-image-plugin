@@ -23,12 +23,14 @@ class BuiltinVariableProvider:
     DEFAULT_RECENT_CHAT_CONTEXT_HOURS = 24.0
     DEFAULT_RECENT_CHAT_CONTEXT_LIMITS = (10, 30, 50)
 
-    def __init__(self, *, chat_id: str, filter_mai: bool = False) -> None:
+    def __init__(self, *, chat_id: str, filter_mai: bool = False,
+                 message_image_base64_provider: Callable[[], str | None] | None = None) -> None:
         """
         初始化内置变量提供器并注册默认变量定义
 
         :param chat_id: str，当前 action 所属聊天会话 ID
         :param filter_mai: bool，获取聊天记录时是否过滤 MaiBot 自身消息
+        :param message_image_base64_provider: Callable[[], str | None] | None，获取消息中图片 base64 的回调函数，返回 None 表示无图片
         :return: None，无返回值
         """
 
@@ -37,6 +39,7 @@ class BuiltinVariableProvider:
 
         self.chat_id = chat_id
         self.filter_mai = filter_mai
+        self._message_image_base64_provider = message_image_base64_provider
         self._definitions: dict[str, BuiltinVariableDefinition] = {}
         self._cache: dict[str, Any] = {}
         self._register_default_definitions()
@@ -72,7 +75,7 @@ class BuiltinVariableProvider:
         :return: frozenset[str]，默认注册的内置变量名称集合
         """
         return frozenset(
-            {"random_seed", "current_datetime"}
+            {"random_seed", "current_datetime", "quoted_image_base64"}
             | {f"recent_chat_context_{limit}" for limit in cls.DEFAULT_RECENT_CHAT_CONTEXT_LIMITS}
         )
 
@@ -120,6 +123,7 @@ class BuiltinVariableProvider:
         """
         self.register("random_seed", self._build_random_seed)
         self.register("current_datetime", self._build_current_datetime)
+        self.register("quoted_image_base64", self._build_quoted_image_base64)
         for limit in self.DEFAULT_RECENT_CHAT_CONTEXT_LIMITS:
             self.register(
                 f"recent_chat_context_{limit}",
@@ -161,3 +165,20 @@ class BuiltinVariableProvider:
             replace_bot_name=True,
             timestamp_mode="absolute",
         )
+
+    def _build_quoted_image_base64(self) -> str:
+        """
+        获取消息中图片的 base64 数据
+
+        优先从引用消息中提取图片，若无引用则从当前消息中提取。
+        未提供 provider 回调或无图片时返回空字符串
+
+        :return: str，图片的无前缀 base64 字符串，或空字符串
+        """
+
+        if self._message_image_base64_provider is None:
+            return ""
+        result = self._message_image_base64_provider()
+        if result is None:
+            return ""
+        return result

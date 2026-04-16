@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from src.common.logger import get_logger
 from .action_parameter_utils import ActionParameterDefinition
+from .bizyair_media_upload import upload_and_get_url as media_upload_and_get_url
 from .builtin_variable_provider import BuiltinVariableProvider
 from .log_utils import short_repr
 from .template_placeholder_utils import TemplatePlaceholderUtils
@@ -46,21 +47,23 @@ class BizyAirOpenApiInputValueBuilder:
             raw_value = item.get("value")
             value_template = "" if raw_value is None else str(raw_value)
             send_if_empty = bool(item.get("send_if_empty", False))
+            upload = bool(item.get("upload", False))
 
             bindings.append(BizyAirOpenApiParameterBinding(
                 field=field,
                 value_template=value_template,
                 value_type=value_type,
                 send_if_empty=send_if_empty,
+                upload=upload,
             ))
             logger.debug(
                 f"[参数构造] 解析参数映射: index={index}, field={field!r}, value_type={value_type!r}, "
-                f"send_if_empty={send_if_empty}, value_template={short_repr(value_template)}"
+                f"send_if_empty={send_if_empty}, upload={upload}, value_template={short_repr(value_template)}"
             )
         return bindings
 
     @classmethod
-    def build_input_values(
+    async def build_input_values(
             cls,
             parameter_bindings: list[BizyAirOpenApiParameterBinding],
             template_context: dict[str, Any],
@@ -69,6 +72,7 @@ class BizyAirOpenApiInputValueBuilder:
             required_action_parameters: set[str],
             action_parameter_definitions: dict[str, ActionParameterDefinition] | None = None,
             builtin_placeholder_values: dict[str, Any] | None = None,
+            upload_api_key: str | None = None,
     ) -> dict[str, Any]:
         """
         根据映射配置和上下文构造 OpenAPI 的 input_values
@@ -79,6 +83,7 @@ class BizyAirOpenApiInputValueBuilder:
         :param action_parameter_names: set[str]，action 支持的参数名集合
         :param required_action_parameters: set[str]，action 中声明为必填的参数名集合
         :param builtin_placeholder_values: dict[str, Any] | None，已构造好的内置变量占位符值映射
+        :param upload_api_key: str | None，BizyAir API Key，upload=True 的 binding 需要该参数进行文件上传
         :return: dict[str, Any]，最终要发送给 OpenAPI 的 input_values 字典
         """
         if not isinstance(template_context, dict) or not template_context:
@@ -112,6 +117,26 @@ class BizyAirOpenApiInputValueBuilder:
                     f"reason='resolved value empty and send_if_empty disabled', value={short_repr(resolved_value)}"
                 )
                 continue
+            # 对 upload=True 的 binding，在类型转换前将值上传为 URL
+            if binding.upload:
+                if not upload_api_key:
+                    raise ValueError(
+                        f"参数 {binding.field!r} 配置了 upload=true，但未提供 upload_api_key（bizyair_client.bearer_token）"
+                    )
+                resolved_value_str = str(resolved_value).strip() if resolved_value is not None else ""
+                if resolved_value_str:
+                    logger.info(
+                        f"[参数构造] 开始上传媒体文件: index={index}, field={binding.field!r}, "
+                        f"input_type_hint={resolved_value_str[:60]!r}"
+                    )
+                    resolved_value = await media_upload_and_get_url(
+                        api_key=upload_api_key,
+                        image_data=resolved_value_str,
+                        file_name=f"upload_{index}.png",
+                    )
+                    logger.info(
+                        f"[参数构造] 媒体文件上传完成: index={index}, field={binding.field!r}, url={short_repr(resolved_value)}"
+                    )
             # 占位符替换完成后，按 value_type 做类型转换
             resolved_value = cls._coerce_mapping_value(
                 resolved_value, binding.value_type,

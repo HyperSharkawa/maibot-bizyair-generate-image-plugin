@@ -23,7 +23,7 @@ class NaiChatInputValueBuilder:
         return BizyAirOpenApiInputValueBuilder.parse_parameter_bindings(raw_bindings)
 
     @classmethod
-    def build_message_content_json(
+    async def build_message_content_json(
             cls,
             parameter_bindings: list[BizyAirOpenApiParameterBinding],
             template_context: dict[str, Any],
@@ -34,7 +34,7 @@ class NaiChatInputValueBuilder:
             builtin_placeholder_values: dict[str, Any] | None = None,
     ) -> str:
         """构造 messages[0].content 对应的 JSON 字符串"""
-        payload = BizyAirOpenApiInputValueBuilder.build_input_values(
+        payload = await BizyAirOpenApiInputValueBuilder.build_input_values(
             parameter_bindings=parameter_bindings,
             template_context=template_context,
             action_inputs=action_inputs,

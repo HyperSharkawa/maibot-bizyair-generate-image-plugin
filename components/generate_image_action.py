@@ -1,7 +1,9 @@
 import base64
 import time
 import traceback
-from typing import Any, Tuple
+from typing import Any, List, Optional, Tuple
+
+from maim_message import Seg
 
 from src.common.logger import get_logger
 from src.config.api_ada_configs import TaskConfig
@@ -107,6 +109,7 @@ class GenerateImageAction(BaseAction):
             builtin_variable_provider = BuiltinVariableProvider(
                 chat_id=self.chat_id,
                 filter_mai=False,
+                message_image_base64_provider=self._extract_message_image_base64,
             )
             failure_stage = "build_custom_variable_registry"
             custom_variable_registry = CustomVariableRegistry(
@@ -153,7 +156,7 @@ class GenerateImageAction(BaseAction):
             template_context = {**resolved_action_inputs, **custom_variable_values}
 
             failure_stage = "build_provider_payload"
-            provider_payload, timeout = self._build_provider_payload(
+            provider_payload, timeout = await self._build_provider_payload(
                 provider=provider,
                 resolved_preset=resolved_preset,
                 parameter_bindings_config=parameter_bindings_config,
@@ -215,6 +218,50 @@ class GenerateImageAction(BaseAction):
             raw_reply = f"[图片生成失败] {type(exc).__name__}: {exc}\n调用栈:\n{stack_trace}"
             await self._send_failure_reply(raw_reply)
             return False, raw_reply
+
+    def _extract_message_image_base64(self, message_segment_list: Optional[List[Seg]] = None) -> Optional[str]:
+        """
+        从消息段中递归提取第一张图片的 base64 数据
+
+        消息段按用户发送消息体顺序排列，引用消息的段排在最前方，
+        因此从前往后遍历天然优先提取引用消息中的图片。
+        消息段可能嵌套（type="seglist" 时 data 为子消息段列表），递归展开搜索。
+        若引用消息和当前消息均无图片，返回 None
+
+        :param message_segment_list: Optional[List[Seg]]，待搜索的消息段列表，首次调用时为 None 表示从 chat_stream 获取
+        :return: Optional[str]，图片的无前缀 base64 字符串，或 None
+        """
+
+        if message_segment_list is None:
+            root_segment: Seg = self.chat_stream.context.message.message_segment
+            logger.debug(f"message_segment: {root_segment}")
+            if root_segment.type == "seglist":
+                message_segment_list = root_segment.data
+            else:
+                message_segment_list = [root_segment]
+            # is_root 标记首次调用，用于控制日志输出
+            is_root = True
+        else:
+            is_root = False
+
+        if not message_segment_list:
+            if is_root:
+                logger.warning(f"{self.log_prefix} 没有从消息中找到图片 base64！")
+            return None
+
+        for segment in message_segment_list:
+            if segment.type == "seglist":
+                # 递归展开嵌套的消息段列表
+                result = self._extract_message_image_base64(segment.data)
+                if result:
+                    return result
+            elif segment.type in ("image", "emoji"):
+                if segment.data and isinstance(segment.data, str):
+                    return segment.data
+
+        if is_root:
+            logger.warning(f"{self.log_prefix} 没有从消息中找到图片 base64！")
+        return None
 
     async def _generate_variable_with_llm(self, prompt: str) -> str:
         """使用变量 LLM 配置生成最终变量值"""
@@ -320,7 +367,7 @@ class GenerateImageAction(BaseAction):
             return NaiChatInputValueBuilder.collect_builtin_placeholder_names_from_bindings(parameter_bindings_config)
         raise ValueError(f"未知的 provider: {provider}")
 
-    def _build_provider_payload(
+    async def _build_provider_payload(
             self,
             provider: str,
             resolved_preset: dict[str, Any],
@@ -334,7 +381,10 @@ class GenerateImageAction(BaseAction):
 
         if provider == "bizyair_openapi":
             parameter_bindings = BizyAirOpenApiInputValueBuilder.parse_parameter_bindings(parameter_bindings_config)
-            input_values = BizyAirOpenApiInputValueBuilder.build_input_values(
+            token = str(self.get_config("bizyair_client.bearer_token", "")).strip()
+            if not token:
+                raise ValueError("插件未配置 bizyair_client.bearer_token")
+            input_values = await BizyAirOpenApiInputValueBuilder.build_input_values(
                 parameter_bindings=parameter_bindings,
                 template_context=template_context,
                 action_inputs=resolved_action_inputs,
@@ -342,14 +392,13 @@ class GenerateImageAction(BaseAction):
                 required_action_parameters=set(self.required_action_parameters),
                 action_parameter_definitions=self.action_parameters,
                 builtin_placeholder_values=builtin_placeholder_values,
+                upload_api_key=token,
             )
-            token = str(self.get_config("bizyair_client.bearer_token", "")).strip()
-            if not token:
-                raise ValueError("插件未配置 bizyair_client.bearer_token")
             timeout = float(str(self.get_config("bizyair_client.timeout", 180.0)).strip())
             raw_app_id = preset.get("app_id")
             if raw_app_id is None:
                 raise ValueError(f"BizyAir 预设 {self.active_preset!r} 的 app_id 为空")
+            logger.info(f"[参数构造] 最终 input_values: {input_values}")
             return {
                 "token": token,
                 "app_id": int(raw_app_id),
@@ -358,7 +407,7 @@ class GenerateImageAction(BaseAction):
 
         if provider == "nai_chat":
             parameter_bindings = NaiChatInputValueBuilder.parse_parameter_bindings(parameter_bindings_config)
-            content_json = NaiChatInputValueBuilder.build_message_content_json(
+            content_json = await NaiChatInputValueBuilder.build_message_content_json(
                 parameter_bindings=parameter_bindings,
                 template_context=template_context,
                 action_inputs=resolved_action_inputs,
@@ -377,6 +426,7 @@ class GenerateImageAction(BaseAction):
             if not model:
                 raise ValueError(f"NAI 预设 {self.active_preset!r} 的 model 为空")
             timeout = float(str(self.get_config("nai_chat_client.timeout", 180.0)).strip())
+            logger.info(f"[参数构造] 最终 content_json: {content_json}")
             return {
                 "api_key": api_key,
                 "base_url": base_url,

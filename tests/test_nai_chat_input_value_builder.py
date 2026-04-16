@@ -7,14 +7,15 @@ from services.nai_chat_input_value_builder import NaiChatInputValueBuilder
 
 
 class TestNaiChatInputValueBuilder:
-    def test_build_message_content_json_normal(self):
+    @pytest.mark.asyncio
+    async def test_build_message_content_json_normal(self):
         raw = [
             {"field": "prompt", "value_type": "string", "value": "{prompt}"},
             {"field": "steps", "value_type": "int", "value": "23"},
             {"field": "size", "value_type": "json", "value": "[832, 1216]"},
         ]
         bindings = NaiChatInputValueBuilder.parse_parameter_bindings(raw)
-        result = NaiChatInputValueBuilder.build_message_content_json(
+        result = await NaiChatInputValueBuilder.build_message_content_json(
             parameter_bindings=bindings,
             template_context={"prompt": "a cat"},
             action_inputs={"prompt": "a cat"},
@@ -31,13 +32,14 @@ class TestNaiChatInputValueBuilder:
             "size": [832, 1216],
         }
 
-    def test_empty_payload_raises(self):
+    @pytest.mark.asyncio
+    async def test_empty_payload_raises(self):
         raw = [
             {"field": "negative_prompt", "value_type": "string", "value": "{missing}"},
         ]
         bindings = NaiChatInputValueBuilder.parse_parameter_bindings(raw)
         with pytest.raises(ValueError, match="解析结果为空"):
-            NaiChatInputValueBuilder.build_message_content_json(
+            await NaiChatInputValueBuilder.build_message_content_json(
                 parameter_bindings=bindings,
                 template_context={"prompt": "a cat"},
                 action_inputs={"prompt": "a cat"},

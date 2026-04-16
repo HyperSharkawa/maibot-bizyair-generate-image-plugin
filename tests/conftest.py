@@ -99,6 +99,7 @@ def _setup_plugin_package() -> None:
         f"{_PKG}.services.preset_resolution",
         f"{_PKG}.services.template_placeholder_utils",
         f"{_PKG}.services.variable_dependency_resolver",
+        f"{_PKG}.services.bizyair_media_upload",
         f"{_PKG}.clients.base",
         f"{_PKG}.clients.nai_chat_client",
         f"{_PKG}.clients.openapi_client",
