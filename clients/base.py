@@ -16,7 +16,7 @@ class BizyAirImageResult:
 
     async def download_bytes(self, timeout: float = 180.0) -> bytes:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(self.image_url,timeout=timeout)
+            response = await client.get(self.image_url, timeout=timeout)
             response.raise_for_status()
             return response.content
 
@@ -94,10 +94,6 @@ class BizyAirBaseClient(ABC):
     @abstractmethod
     async def generate_image(self, *args, **kwargs) -> BizyAirImageResult:
         raise NotImplementedError
-
-    async def generate_and_download(self, *args, **kwargs) -> bytes:
-        result = await self.generate_image(*args, **kwargs)
-        return await result.download_bytes(timeout=self.timeout)
 
     async def generate_and_save(self, *args, file_path: str | Path, **kwargs) -> Path:
         result = await self.generate_image(*args, **kwargs)

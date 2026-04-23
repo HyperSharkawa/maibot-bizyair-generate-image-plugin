@@ -5,6 +5,7 @@ from typing import Any, List, Optional, Tuple
 
 from maim_message import Seg
 
+from clients import BizyAirImageResult
 from src.common.logger import get_logger
 from src.config.api_ada_configs import TaskConfig
 from src.config.config import global_config
@@ -173,18 +174,11 @@ class GenerateImageAction(BaseAction):
                 f"timeout={timeout}")
 
             failure_stage = "generate_image_bytes"
-            generate_image_start_time = time.perf_counter()
             image_bytes = await self._generate_image_bytes(
                 provider=provider,
                 resolved_preset=resolved_preset,
                 provider_payload=provider_payload,
                 timeout=timeout,
-            )
-            generate_image_elapsed_seconds = time.perf_counter() - generate_image_start_time
-            image_size_mb = len(image_bytes) / (1024 * 1024)
-            logger.info(
-                f"{self.log_prefix} 图片生成完成，已获取图片数据: size={image_size_mb:.2f}MB, "
-                f"generate_time={generate_image_elapsed_seconds:.2f}s"
             )
 
             if not image_bytes:
@@ -473,6 +467,9 @@ class GenerateImageAction(BaseAction):
             timeout: float,
     ) -> bytes:
         """按后端创建客户端并返回生成后的图片字节"""
+        generate_image_start_time = time.perf_counter()
+        generate_result: BizyAirImageResult
+        client: BizyAirOpenApiClient | NaiChatClient
         if provider == "bizyair_openapi":
             client = BizyAirOpenApiClient(
                 bearer_token=provider_payload["token"],
@@ -480,18 +477,27 @@ class GenerateImageAction(BaseAction):
                 web_app_id=provider_payload["app_id"],
                 timeout=timeout,
             )
-            return await client.generate_and_download(input_values=provider_payload["input_values"])
+            generate_result = await client.generate_image(input_values=provider_payload["input_values"])
 
-        if provider == "nai_chat":
+        elif provider == "nai_chat":
             client = NaiChatClient(
                 bearer_token=provider_payload["api_key"],
                 base_url=provider_payload["base_url"],
                 model=provider_payload["model"],
                 timeout=timeout,
             )
-            return await client.generate_and_download(content_json=provider_payload["content_json"])
+            generate_result = await client.generate_image(content_json=provider_payload["content_json"])
+        else:
+            raise ValueError(f"未知的 provider: {provider}, resolved_preset={resolved_preset}")
 
-        raise ValueError(f"未知的 provider: {provider}, resolved_preset={resolved_preset}")
+        generate_image_end_time = time.perf_counter()
+        generate_image_elapsed_seconds = generate_image_end_time - generate_image_start_time
+        logger.info(f"{self.log_prefix} 图片生成完成: {generate_result}, generate_time={generate_image_elapsed_seconds:.2f}s")
+        image_bytes = await generate_result.download_bytes(timeout=client.timeout)
+        download_time = time.perf_counter() - generate_image_end_time
+        image_size_mb = len(image_bytes) / (1024 * 1024)
+        logger.info(f"{self.log_prefix} 图片下载完成，已获取图片数据: size={image_size_mb:.2f}MB, download_time={download_time:.2f}s")
+        return image_bytes
 
     def _build_action_display(self, action_inputs: dict[str, Any]) -> str:
         """构造写入动作记录的简短展示文本"""
