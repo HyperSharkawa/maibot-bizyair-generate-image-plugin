@@ -5,7 +5,6 @@ from typing import Any, List, Optional, Tuple
 
 from maim_message import Seg
 
-from ..clients import BizyAirImageResult
 from src.common.logger import get_logger
 from src.config.api_ada_configs import TaskConfig
 from src.config.config import global_config
@@ -13,6 +12,7 @@ from src.config.config import model_config
 from src.plugin_system import BaseAction
 from src.plugin_system.apis import generator_api, llm_api
 from src.plugin_system.base.component_types import ActionActivationType
+from ..clients import BizyAirImageResult
 from ..clients import (
     BizyAirOpenApiClient,
     NaiChatClient,
@@ -493,7 +493,7 @@ class GenerateImageAction(BaseAction):
         generate_image_end_time = time.perf_counter()
         generate_image_elapsed_seconds = generate_image_end_time - generate_image_start_time
         logger.info(f"{self.log_prefix} 图片生成完成: {generate_result}, generate_time={generate_image_elapsed_seconds:.2f}s")
-        image_bytes = await generate_result.download_bytes(timeout=client.timeout)
+        image_bytes = await generate_result.download_bytes()
         download_time = time.perf_counter() - generate_image_end_time
         image_size_mb = len(image_bytes) / (1024 * 1024)
         logger.info(f"{self.log_prefix} 图片下载完成，已获取图片数据: size={image_size_mb:.2f}MB, download_time={download_time:.2f}s")
