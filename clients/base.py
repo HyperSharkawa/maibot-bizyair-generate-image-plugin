@@ -18,6 +18,19 @@ class BizyAirImageResult:
 
     image_url: str
 
+    def __str__(self) -> str:
+        """返回对象的字符串表示，对长 URL 进行截断处理。"""
+        if self.image_url.startswith("data:image/"):
+            # 对于 data URL，只显示前面的 header 部分
+            header_part = self.image_url.split(",", 1)[0]
+            return f"BizyAirImageResult(image_url='{header_part},...')"
+        else:
+            return f"BizyAirImageResult(image_url='{self.image_url}')"
+
+    def __repr__(self) -> str:
+        """返回对象的 repr 表示，与 __str__ 保持一致。"""
+        return self.__str__()
+
     async def download_bytes(
         self,
         timeout: float = 60.0,
