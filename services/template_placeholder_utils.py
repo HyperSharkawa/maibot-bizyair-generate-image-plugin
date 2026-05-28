@@ -7,7 +7,13 @@ from typing import Any
 class TemplatePlaceholderUtils:
     """模板占位符扫描与分类工具"""
 
-    PLACEHOLDER_PATTERN = re.compile(r"\{([^{}]+)}")
+    PLACEHOLDER_PATTERN = re.compile(r"\{(\s*[A-Za-z_][A-Za-z0-9_]*\s*)}")
+    """
+    占位符正则
+    仅匹配形如 {name} 的合法标识符占位符，name 必须为字母/数字/下划线组成且不以数字开头
+    允许大括号内部前后存在空白字符
+    收紧此正则的目的是避免把 JSON 字面量（如 {"k": "v", ...}）误判为占位符
+    """
 
     @classmethod
     def extract_placeholder_names(cls, value: str) -> list[str]:
