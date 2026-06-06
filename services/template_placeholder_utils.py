@@ -7,10 +7,12 @@ from typing import Any
 class TemplatePlaceholderUtils:
     """模板占位符扫描与分类工具"""
 
-    PLACEHOLDER_PATTERN = re.compile(r"\{(\s*[A-Za-z_][A-Za-z0-9_]*\s*)}")
+    PLACEHOLDER_PATTERN = re.compile(r"\{(\s*[^\W\d]\w*\s*)}")
     """
     占位符正则
-    仅匹配形如 {name} 的合法标识符占位符，name 必须为字母/数字/下划线组成且不以数字开头
+    匹配形如 {name} 的合法标识符占位符，name 由字母/数字/下划线组成且不以数字开头
+    Python 3 的 re 在 str 模式下 \\w / \\d 默认按 Unicode 匹配，因此 name 允许包含中文等 Unicode 字母
+    [^\\W\\d] 表示「单词字符但不是数字」，即字母（含中文）或下划线，确保首字符不是数字也不是引号/标点
     允许大括号内部前后存在空白字符
     收紧此正则的目的是避免把 JSON 字面量（如 {"k": "v", ...}）误判为占位符
     """
